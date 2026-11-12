@@ -117,5 +117,6 @@ The pre-GitHub app used ad hoc signatures and had no updater. Its first upgrade
 requires a manual installation. Subsequent versions preserve the new identities.
 The embedded Quick Look extension is signed and packaged, but Finder activation
 is not established by successful code signing or a bundle build. Retain that
-limitation until a real Finder test confirms it. A real update between two public
-PreviewMD builds remains a separate live verification after the first release.
+limitation until a real Finder test confirms it. Verify the actual updater with
+two published builds: successful signing, packaging and isolated preference tests
+do not alone establish download, replacement and relaunch of the installed app.

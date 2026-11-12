@@ -6,7 +6,7 @@ This is **bold**, this is *italic*, and this is `inline code`.
 
 - Read Markdown as a document
 - Open it by double-clicking
-- Press Space in Finder for the same preview
+- Press Space in Finder for Quick Look (PreviewMD activation is not yet verified)
 
 > PreviewMD is deliberately read-only.
 
