@@ -1,0 +1,15 @@
+{
+  "version": "0.1.2",
+  "build": "3",
+  "firstReleaseBuild": "3",
+  "id": "preview-md",
+  "name": "PreviewMD",
+  "bundleID": "com.vitalyterenin.preview-md",
+  "githubRepository": "vitalyterenin/preview-md",
+  "feedURL": "https://vitalyterenin.github.io/preview-md/appcast.xml",
+  "downloadURL": "https://github.com/vitalyterenin/preview-md/releases/latest/download/PreviewMD.dmg",
+  "publicEDKey": "0up89n+W2+2pNLquszVwd7YG6+Pnxo4sdc0TW0WPc6E=",
+  "license": "Apache-2.0",
+  "sparkleVersion": "2.10.1",
+  "codeSigningCertificateSHA256": "2257fe2f91c2b76e9499bea925c7894cac00a331030e5d3692971ff5f87c62a9"
+}

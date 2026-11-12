@@ -1,16 +1,17 @@
 import AppKit
 import UniformTypeIdentifiers
 
-@main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let previewController = MarkdownPreviewViewController()
     private var window: NSWindow!
     private var keyboardMonitor: Any?
     private var checkedInitialWindowSize = false
     private var openedFileURL: URL?
+    private var updateSettings: UpdateSettingsController?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        updateSettings = UpdateSettingsController()
         buildMainMenu()
     }
 
@@ -178,10 +179,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    @MainActor @objc private func showSoftwareUpdates(_ sender: Any?) {
+        updateSettings?.present()
+    }
+
     private func buildMainMenu() {
         let mainMenu = NSMenu(title: "Main Menu")
 
         let applicationSubmenu = NSMenu(title: "PreviewMD")
+        let settings = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        let settingsSubmenu = NSMenu(title: "Settings")
+        let softwareUpdates = NSMenuItem(title: "Software Updates…", action: #selector(showSoftwareUpdates(_:)), keyEquivalent: ",")
+        softwareUpdates.target = self
+        settingsSubmenu.addItem(softwareUpdates)
+        settings.submenu = settingsSubmenu
+        applicationSubmenu.addItem(settings)
+        applicationSubmenu.addItem(.separator())
         applicationSubmenu.addItem(withTitle: "Quit PreviewMD", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let applicationMenu = NSMenuItem(title: "PreviewMD", action: nil, keyEquivalent: "")
         applicationMenu.submenu = applicationSubmenu
@@ -203,5 +216,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         viewMenu.submenu = viewSubmenu
         mainMenu.addItem(viewMenu)
         NSApp.mainMenu = mainMenu
+    }
+}
+
+@main
+enum PreviewMDMain {
+    @MainActor
+    static func main() {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        if let index = CommandLine.arguments.firstIndex(of: "--updates-smoke"), CommandLine.arguments.count > index + 1 {
+            app.finishLaunching()
+            let settings = UpdateSettingsController(startingUpdater: true)
+            settings.verifySettings(stage: CommandLine.arguments[index + 1])
+            return
+        }
+        if CommandLine.arguments.contains("--preview-updates") {
+            app.finishLaunching()
+            let settings = UpdateSettingsController(startingUpdater: false)
+            settings.present()
+            withExtendedLifetime(settings) { app.run() }
+            return
+        }
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        withExtendedLifetime(delegate) { app.run() }
     }
 }

@@ -1,0 +1,2 @@
+# Preserve the complete upstream license text, including its original whitespace.
+THIRD_PARTY_NOTICES.md whitespace=-blank-at-eol

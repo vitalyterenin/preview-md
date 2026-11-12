@@ -13,3 +13,9 @@
 *.p8
 *.mobileprovision
 *.provisionprofile
+
+# Python caches and local signing files
+__pycache__/
+*.pyc
+*.key
+*.pem
