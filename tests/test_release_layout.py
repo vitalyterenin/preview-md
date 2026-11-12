@@ -28,6 +28,9 @@ class PreviousFeedTests(unittest.TestCase):
             read.assert_called_once()
 
     def test_first_build_can_bootstrap_only_missing_feed_and_missing_release(self):
+        data=release.config(); data['build']=data['firstReleaseBuild']
+        mock=patch.object(release, 'config', return_value=data)
+        mock.start(); self.addCleanup(mock.stop)
         missing=HTTPError('url',404,'missing',{},None)
         with tempfile.TemporaryDirectory() as directory, patch.object(release.urllib.request,'urlopen',side_effect=[missing,missing]) as read:
             path=Path(directory)/'previous.xml'

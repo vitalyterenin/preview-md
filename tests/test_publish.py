@@ -89,6 +89,9 @@ class PublishTests(unittest.TestCase):
         return self.old if url == self.data['feedURL'] else self.archive
 
     def test_first_release_allows_missing_feed_but_cannot_reset_a_published_release(self):
+        first = dict(self.data, firstReleaseBuild=self.data['build'])
+        mock = patch.object(publish, 'config', return_value=first)
+        mock.start(); self.addCleanup(mock.stop)
         self.state['previousFeedSHA256'] = None
         self.save_state()
         fetch = lambda url: None if url == self.data['feedURL'] else self.archive
@@ -100,6 +103,9 @@ class PublishTests(unittest.TestCase):
         self.assertFalse(self.client.mutations)
 
     def test_first_release_publish_retry_reuses_identical_archive_before_feed_deploy(self):
+        first = dict(self.data, firstReleaseBuild=self.data['build'])
+        mock = patch.object(publish, 'config', return_value=first)
+        mock.start(); self.addCleanup(mock.stop)
         self.state['previousFeedSHA256'] = None
         self.save_state()
         self.client.latest = {'tag_name': 'v' + self.data['version']}
