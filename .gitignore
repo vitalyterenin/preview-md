@@ -1,0 +1,15 @@
+# macOS metadata and local build output
+.DS_Store
+/build/
+
+# Local task history and per-document reading preferences
+/tracker/
+.previewmd/
+
+# Local credentials and signing material
+.env
+.env.*
+*.p12
+*.p8
+*.mobileprovision
+*.provisionprofile

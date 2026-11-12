@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="260" viewBox="0 0 960 260" role="img" aria-label="Markdown source transforms into a PreviewMD document">
+  <rect width="960" height="260" rx="18" fill="#f6f8fa"/>
+  <rect x="42" y="48" width="250" height="164" rx="12" fill="#ffffff" stroke="#d8dee4"/>
+  <text x="70" y="92" fill="#57606a" font-family="SFMono-Regular, Menlo, monospace" font-size="24"># Markdown</text>
+  <text x="70" y="128" fill="#57606a" font-family="SFMono-Regular, Menlo, monospace" font-size="22">**bold**</text>
+  <text x="70" y="164" fill="#57606a" font-family="SFMono-Regular, Menlo, monospace" font-size="22">| table |</text>
+  <path d="M355 130h190m0 0-25-25m25 25-25 25" fill="none" stroke="#0969da" stroke-linecap="round" stroke-linejoin="round" stroke-width="8"/>
+  <rect x="670" y="48" width="248" height="164" rx="12" fill="#ffffff" stroke="#d8dee4"/>
+  <text x="700" y="102" fill="#1f2328" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="30" font-weight="700">Markdown</text>
+  <text x="700" y="144" fill="#1f2328" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="24" font-weight="700">bold</text>
+  <line x1="700" y1="168" x2="884" y2="168" stroke="#d8dee4" stroke-width="2"/>
+  <line x1="792" y1="168" x2="792" y2="198" stroke="#d8dee4" stroke-width="2"/>
+  <text x="712" y="190" fill="#57606a" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">table</text>
+  <text x="807" y="190" fill="#57606a" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16">view</text>
+</svg>
