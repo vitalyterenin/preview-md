@@ -1,52 +1,107 @@
 # PreviewMD
 
-PreviewMD is a native, read-only macOS viewer for Markdown files. It renders Markdown as a clean document rather than source text.
+PreviewMD is a native, read-only Markdown viewer for macOS. Open a Markdown file
+from Finder or **File → Open…** to read the rendered document, with adjustable
+zoom, reading width and table columns.
 
-## Current scope
+## Install
 
-- Open supported Markdown files from Finder or with **Open…**.
-- Register as a viewer for `.md`, `.markdown`, `.mdown`, and `.mkdn` files.
-- Show the same renderer in the application and Finder Quick Look.
-- Support headings, paragraphs, bold, italic, strikethrough, inline code, fenced code blocks, lists, block quotes, pipe tables, links, and horizontal rules.
-- Do not provide editing controls.
+Requires an Apple silicon Mac and macOS 13 or later.
 
-## Reading controls
+1. Download [PreviewMD.dmg](https://github.com/vitalyterenin/preview-md/releases/latest/download/PreviewMD.dmg)
+   from the latest GitHub release.
+2. Open the image, drag **PreviewMD** to **Applications**, eject the image, and
+   launch the installed app.
+3. For Markdown files, choose **PreviewMD** in Finder's **Get Info → Open with**;
+   use **Change All…** if you want it as the default viewer.
 
-- `Command-Plus` increases the document zoom.
-- `Command-Minus` decreases the document zoom.
-- `Command-Zero` resets the zoom to its actual size.
-- **Edit** in the title bar opens the current file in Visual Studio Code.
+The app uses its own persistent self-signed certificate. It is not Developer ID
+signed or notarized, so first launch may need **System Settings → Privacy &
+Security → Open Anyway**. No certificate installation is required.
 
-Zoom scales the entire document viewport, including typography, code blocks, and layout spacing.
+## Read Markdown
 
-PreviewMD remembers each document's window frame and zoom level. New documents open in a larger `1200 × 900` window when screen space permits.
+Supported extensions are `.md`, `.markdown`, `.mdown` and `.mkdn`.
+The renderer supports headings, paragraphs, bold, italic, strikethrough, inline
+code, fenced code blocks, lists, block quotes, pipe tables, images, links and
+horizontal rules. PreviewMD provides no text editing controls.
 
-## Reading width and tables
+| Control | Action |
+| --- | --- |
+| `Command-Plus` / `Command-Minus` | Increase / decrease document zoom |
+| `Command-Zero` | Reset zoom to actual size |
+| **Width: 800** / **Width: Window** | Switch between a centered reading column and available window width |
+| Table column divider | Drag to resize the adjacent columns |
+| **Edit** | Open the current file in Visual Studio Code, when installed |
+| `Command-W` / `Command-Q` | Close the window / quit PreviewMD |
 
-- Use **Width: 800** in the upper app header for a centered 800 px reading column. Click it to switch to **Width: Window**, which lets the document use the available window width.
-- The selected reading width mode is remembered for each document.
-- Drag a table's vertical divider to resize its adjacent columns. PreviewMD saves the resulting column proportions in `.previewmd/<document-name>.json` beside the document and restores them in both the app and Finder Quick Look. The sidecar is created only after the first resize, and it travels with the document directory when the directory is copied or synced.
+Zoom scales the full document, including typography, code blocks and spacing.
+Window position, zoom and reading width are remembered for each document.
+New document windows use a `1200 × 900` content size when screen space permits;
+the minimum window size is `900 × 650`.
 
-## App icon
+After a table resize, column proportions are saved in
+`.previewmd/<document-name>.json` beside the Markdown file. The sidecar travels
+with the directory when copied or synced; the original Markdown is not edited.
+Writing that preference requires a writable document directory.
 
-The app icon source is `assets/previewmd-icon.png`. The build embeds the generated `resources/previewmd.icns` bundle resource.
+## Software updates
 
-## Build
+Open **PreviewMD → Settings → Software Updates…**:
 
-Requirements: an Apple silicon Mac, macOS 13 or later, and the macOS Command Line Tools with the Swift compiler. The current build script targets `arm64` and uses only Apple system frameworks.
+1. **Check for Updates…** starts a manual check when the updater is ready.
+2. **Automatically Check for Updates** enables background checks while running.
+3. **Automatically Install Updates** controls automatic downloading/installation.
+   It is disabled while checks are off; the saved choice is retained.
+4. **Version** shows the running app version.
 
-Build from a local checkout:
+Both preferences are enabled by default. Checks run every four hours while the
+app is running. Changes persist across launches and stay in sync with Sparkle's
+own dialogs. Automatic installation may wait for the app to quit or for macOS
+authorization. Updates and their feed are signed with PreviewMD's own update key.
+An older locally built copy has no updater and needs one manual installation.
+
+## Data and limitations
+
+PreviewMD reads local files and stores reading preferences locally. It does not
+add telemetry or request Accessibility, Input Monitoring or Screen Recording.
+Update checks contact GitHub Releases/Pages; Sparkle system profiling is disabled.
+Images and links in a document may contact their referenced servers through WebKit.
+
+The embedded Finder Quick Look extension shares the renderer and packaged table
+preferences. Finder activation remains unverified; Finder may use its plain-text
+fallback. Building or signing the extension alone does not prove activation.
+
+Task lists, footnotes, GitHub alerts, collapsible details, math and Mermaid are
+not rendered as those extended features. See the
+[render gallery](samples/markdown-render-gallery.md) for examples and the
+[formatting demo](samples/formatting-demo.md) for a short sample.
+
+Report problems through [GitHub Issues](https://github.com/vitalyterenin/preview-md/issues).
+
+## Build and release
+
+With the macOS Command Line Tools and Python 3 installed, run from the repository root:
 
 ```sh
+bash scripts/test.sh
 ./scripts/build-app.sh
+python3 scripts/check-app.py build/PreviewMD.app
 ```
 
-The resulting app bundle is `build/PreviewMD.app`. The script applies an ad hoc signature for local use; it does not produce a Developer ID signed or notarized distribution.
+The build downloads a pinned, checksum-verified Sparkle release and uses Apple's
+AppKit, WebKit and QuickLookUI frameworks. It produces `build/PreviewMD.app` with
+an ad hoc development signature. Keep development output separate from the
+installed stable app. The icon source is `assets/previewmd-icon.png`; the embedded
+resource is `resources/previewmd.icns`.
 
-Move the app to `/Applications`, open it once, then choose **PreviewMD** as the default app for Markdown files in Finder.
+[Release operations](docs/releases.md) describe GitHub Actions builds, persistent
+signing, the stable DMG/feed, verification and recovery. Release artifacts are
+built in GitHub Actions.
 
-### Quick Look status
+## License
 
-The Quick Look extension is included in the build and shares the Markdown renderer. Finder activation remains unverified with the current ad hoc signing setup; Finder may show its plain-text fallback. A successful build alone does not confirm Quick Look activation.
-
-Open `samples/formatting-demo.md` to check the renderer.
+Maintained by Vitaly Terenin. PreviewMD's original code and assets are licensed
+under [Apache-2.0](LICENSE); see [NOTICE](NOTICE). Sparkle and adapted release
+tooling retain their own terms in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+All three documents are included in the app and DMG.
