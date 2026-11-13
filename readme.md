@@ -4,9 +4,6 @@ PreviewMD is a native, read-only Markdown viewer for macOS. Open a Markdown file
 from Finder or **File → Open…** to read the rendered document, with adjustable
 zoom, reading width and table columns.
 
-The profile features described here are local development work. They have not
-been published or installed over the stable release.
-
 ## Install
 
 Requires an Apple silicon Mac and macOS 13 or later.
@@ -194,8 +191,8 @@ the PNG master to regenerate all icon sizes and the embedded resource.
 signing, the stable DMG/feed, verification and recovery. Release artifacts are
 built in GitHub Actions.
 
-The [code audit](docs/refactoring-review.md) records the local candidate's
-initial findings, local corrections and verification results.
+The historical [code audit](docs/refactoring-review.md) records the 0.1.4
+implementation findings, corrections and local verification results.
 
 ## License
 

@@ -7,7 +7,9 @@ implementation or release approval.
 **Follow-up:** local implementation was subsequently authorized. R1–R4 are now
 addressed; see [Implementation outcome](#implementation-outcome). The original
 audit evidence and historical line references below describe the initial
-revision, not the corrected state. Publication and installation remain on hold.
+revision, not the corrected state. Publication and installation were on hold at
+the implementation handoff. Current release procedures are maintained in
+[the release guide](releases.md).
 
 ## Scope and result
 
@@ -31,7 +33,7 @@ fresh-context `deep_refactor` executor. The bounded delivery review used the sam
 explicit selection. Accepted launch configuration is the available evidence;
 independent runtime model metadata was unavailable. No rerouting was reported.
 
-## Current system and coverage
+## Audited system and coverage
 
 Finder/open-panel events enter `AppDelegate`, which owns `ReaderWindow` instances.
 `MarkdownSnapshot` reads the file; a reader captures its old position and uses a
@@ -170,7 +172,7 @@ high. **Change:** small condition correction; low effort and low regression risk
 
 Locations: [`.github/workflows/release.yml:70`](../.github/workflows/release.yml#L70)
 gates publication only on `github.ref_type == 'tag'`, while
-[`docs/releases.md:6`](releases.md#L6) promises that manual runs build/check without
+[`docs/releases.md:6`](releases.md) promises that manual runs build/check without
 publication. `scripts/publish.py:92` validates the tag/version but does not reject
 the workflow-dispatch event.
 
@@ -268,14 +270,14 @@ Executed successfully against the unchanged application source:
   preferences passed across fresh/relaunch/resume stages.
 
 Local evidence:
-[probe source](../build/code-audit-2026-11-13/probe.swift),
-[native probe results](../build/code-audit-2026-11-13/probe.log),
-[render probe source](../build/code-audit-2026-11-13/render-probe.swift),
-[render measurements](../build/code-audit-2026-11-13/render-probe.log),
-[full-embed results](../build/code-audit-2026-11-13/sections.log),
-[mock-only publication reproducer](../build/code-audit-2026-11-13/publisher-probe.py),
-[build log](../build/code-audit-2026-11-13/build.log),
-[package-check log](../build/code-audit-2026-11-13/check-app.log).
+probe source (`build/code-audit-2026-11-13/probe.swift`),
+native probe results (`build/code-audit-2026-11-13/probe.log`),
+render probe source (`build/code-audit-2026-11-13/render-probe.swift`),
+render measurements (`build/code-audit-2026-11-13/render-probe.log`),
+full-embed results (`build/code-audit-2026-11-13/sections.log`),
+mock-only publication reproducer (`build/code-audit-2026-11-13/publisher-probe.py`),
+build log (`build/code-audit-2026-11-13/build.log`),
+package-check log (`build/code-audit-2026-11-13/check-app.log`).
 These ignored local paths are evidence attachments, not release assets, and will
 not accompany a normal clone. Reproduction uses synthetic fixtures only.
 The retained runners now allocate a fresh fixture directory per invocation so
@@ -385,13 +387,13 @@ No tests were skipped or relaxed to obtain this result.
 
 Evidence retained locally:
 
-- [Final integrated test log](../build/code-audit-2026-11-13/final-tests.log).
-- [Fragment failures before correction](../build/code-audit-2026-11-13/fragment-before.log)
-  and [focused corrected results](../build/code-audit-2026-11-13/fragment-after.log).
-- [Concurrent-width test sensitivity](../build/code-audit-2026-11-13/width-guard-sensitivity.log).
-- [Comparable benchmark runner and exact flags](../build/code-audit-2026-11-13/comparison/run.sh),
-  [baseline timings/hashes](../build/code-audit-2026-11-13/comparison/baseline.csv)
-  and [corrected timings/hashes](../build/code-audit-2026-11-13/comparison/current.csv).
+- Final integrated test log (`build/code-audit-2026-11-13/final-tests.log`).
+- Fragment failures before correction (`build/code-audit-2026-11-13/fragment-before.log`)
+  and focused corrected results (`build/code-audit-2026-11-13/fragment-after.log`).
+- Concurrent-width test sensitivity (`build/code-audit-2026-11-13/width-guard-sensitivity.log`).
+- Comparable benchmark runner and exact flags (`build/code-audit-2026-11-13/comparison/run.sh`),
+  baseline timings/hashes (`build/code-audit-2026-11-13/comparison/baseline.csv`)
+  and corrected timings/hashes (`build/code-audit-2026-11-13/comparison/current.csv`).
 
 The benchmark runner uses the retained original Swift sources in its `baseline`
 subdirectory and current project sources for the corrected executable. Repeated
@@ -407,8 +409,8 @@ python3 scripts/check-app.py build/code-audit-2026-11-13/final-package/PreviewMD
 
 Both commands passed: main app/Quick Look compilation, arm64 binaries, strict
 ad hoc signatures, bundled notices and isolated Sparkle fresh/relaunch/resume
-preferences. See the [final build log](../build/code-audit-2026-11-13/final-build.log)
-and [final package-check log](../build/code-audit-2026-11-13/final-check-app.log).
+preferences. See the final build log (`build/code-audit-2026-11-13/final-build.log`)
+and final package-check log (`build/code-audit-2026-11-13/final-check-app.log`).
 The development package is separate from the earlier audit package and installed
 stable application. The installed plist still reports 0.1.3/build 4; plugin
 registration is byte-for-byte unchanged from the audit snapshot. Icon/assets,

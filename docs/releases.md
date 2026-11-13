@@ -1,7 +1,7 @@
 # PreviewMD releases
 
 PreviewMD uses GitHub Actions for arm64 builds, GitHub Releases for `PreviewMD.dmg`,
-and GitHub Pages for its signed Sparkle feed. Only matching `v<version>` tags publish;
+and GitHub Pages for its signed Sparkle feed. Only a push of a matching `v<version>` tag publishes;
 pull requests run checks without signing secrets or publication permissions.
 A manual workflow run builds and checks a package without publishing a release.
 
@@ -73,7 +73,7 @@ already published app/DMG bytes require a new version and build.
 ## Local checks
 
 From the repository root on an Apple silicon Mac with Command Line Tools,
-Swift, Python 3 and network access for the pinned Sparkle and cmark-gfm downloads:
+Swift, Python 3 and network access for the pinned Sparkle, cmark-gfm and Yams downloads:
 
 ```sh
 bash scripts/test.sh
@@ -81,9 +81,12 @@ bash scripts/test.sh
 python3 scripts/check-app.py build/PreviewMD.app
 ```
 
-The build downloads pinned official Sparkle and cmark-gfm archives after SHA-256 verification,
-embeds only arm64 executables, and validates the complete dependency notices. The cmark-gfm static library is compiled with Apple Clang; its full
-COPYING is pinned and checked against the bundled notice. All notices remain in `Contents/Resources/Licenses` after installation.
+The build downloads pinned official Sparkle, cmark-gfm and Yams archives after
+SHA-256 verification, embeds only arm64 executables, and validates complete
+dependency notices. The cmark-gfm static library is compiled with Apple Clang;
+Yams and bundled libyaml are built through SwiftPM. Their complete upstream
+licenses are pinned and checked against the bundled notices. All notices remain
+in `Contents/Resources/Licenses` after installation.
 Packaging checks the finished image as well. Adapted release tooling retains its
 MIT terms in THIRD_PARTY_NOTICES.md; PreviewMD's original code is Apache-2.0.
 
@@ -102,7 +105,7 @@ readiness independently of the automatic-check preference. Feed signatures are
 required, failure fallback, system profiling and delta archives are disabled.
 
 Build overrides: `PREVIEWMD_OUTPUT_DIR`, `PREVIEWMD_TOOLS_DIR`,
-`PREVIEWMD_MARKDOWN_TOOLS_DIR`,
+`PREVIEWMD_MARKDOWN_TOOLS_DIR`, `PREVIEWMD_YAML_TOOLS_DIR`,
 `PREVIEWMD_SIGN_KEYCHAIN`, and `PREVIEWMD_REQUIRE_RELEASE_SIGNING`.
 Do not install a development build over the stable copy. Local builds support
 verification; public release artifacts must be built in GitHub Actions.
@@ -161,19 +164,15 @@ with a local SVG, identify the actual extension process, and exercise the real
 sandboxed Quick Look file access. Compare saved preferences and sidecars across
 that update. Do not infer migration from a fresh empty preference domain.
 
-The whole documentation review covers this guide, the README, both samples,
-referenced illustration and icon assets, LICENSE, NOTICE, complete third-party
-notices, and the GitHub About description. The historical local product audit is
-retained outside publication because its evidence links are machine-local.
+Before every tag, review this guide, the README, all four Markdown samples,
+referenced illustration and icon assets, icon provenance, the historical code
+audit, LICENSE, NOTICE, complete third-party notices, and the GitHub About
+description. Record actual checks and corrections in the release PR. The
+historical product audit remains local; it is not maintained release guidance.
 
-## Local Obsidian/profile development
+## Markdown profiles and Obsidian validation
 
-The `feature/obsidian-profiles` branch extends the local reading-workflow candidate.
-It does not publish 0.1.4, change the version/build, or replace the installed 0.1.3.
-The owner's publication hold remains in effect; normal exact-ref approval is still
-required before any future PR or release operation.
-
-The shared renderer now offers Auto/CommonMark/GitHub/Obsidian profiles. The native
+The shared renderer offers Auto/CommonMark/GitHub/Obsidian profiles. The native
 regression harness adds a synthetic vault with Russian typed properties, short and
 path links, heading/block transclusion, images, nested folding callouts, comments,
 highlights, tasks and footnotes. It verifies actual WebKit navigation, Back, Find,
@@ -190,7 +189,9 @@ SHA-256, checks the reviewed license, and builds the dependency-free upstream
 Swift package. Its static product is linked into both host and extension. Older
 SwiftPM object output and the newer static-library output are supported. No YAML
 objects or note code are evaluated; event limits run before node composition.
-The optional cache override is `PREVIEWMD_YAML_TOOLS_DIR`.
+The optional cache override is `PREVIEWMD_YAML_TOOLS_DIR`. Cache identity includes
+the selected Swift command/version, SDK path/version, target and build script;
+missing libraries, modules or headers trigger a rebuild.
 
 [Quartz's OFM adapter](https://github.com/jackyzha0/quartz/blob/v4/quartz/plugins/transformers/ofm.ts)
 and [remark-wiki-link](https://github.com/flowershow/remark-wiki-link) were reviewed.
@@ -199,3 +200,18 @@ note transclusion. No code was copied from either. PreviewMD instead extends its
 existing cmark syntax tree and filename resolver for native read-only rendering.
 Obsidian's MarkdownRenderer requires the Obsidian App/Component lifecycle and is
 not used as a standalone library. There is no embedded Obsidian/plugin runtime.
+
+## Reader responsiveness and fragment regressions
+
+`test.sh` also covers bounded background preparation: one active request and one
+replaceable pending request per reader. It exercises rapid requests, profile and
+document changes during loading, close, failed Back/retry, position retention and
+concurrent table resizing. A large synthetic vault check measures main-thread
+responsiveness while another window remains interactive. Timings depend on the
+machine and filesystem; they are not a supported maximum latency.
+
+Fragment checks pair full-note rendering with section/block embeds. Hidden
+comments, frontmatter and literal code are not selectable sections or block IDs;
+nested sections stop at their containing structure. Escaped carets remain text.
+See the historical [code audit](refactoring-review.md#implementation-outcome) for
+the original reproduction and local before/after measurements.
