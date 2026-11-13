@@ -209,6 +209,8 @@ document changes during loading, close, failed Back/retry, position retention an
 concurrent table resizing. A large synthetic vault check measures main-thread
 responsiveness while another window remains interactive. Timings depend on the
 machine and filesystem; they are not a supported maximum latency.
+The heartbeat assertion covers the measured background-preparation interval;
+the complete load, including subsequent WebKit layout, is reported separately.
 
 Fragment checks pair full-note rendering with section/block embeds. Hidden
 comments, frontmatter and literal code are not selectable sections or block IDs;

@@ -34,6 +34,24 @@ private final class PreparationGate {
     }
 }
 
+/// Attribute heartbeat delays to the real preparation interval, rather than
+/// unrelated WebKit layout after the prepared document has already committed.
+private final class PreparationTiming {
+    private let lock = NSLock()
+    private var start: Double?
+    private var end: Double?
+    var interval: (Double, Double?)? {
+        lock.lock(); defer { lock.unlock() }
+        return start.map { ($0, end) }
+    }
+    func prepare(_ request: DocumentLoader.Request) throws -> PreparedDocument? {
+        precondition(!Thread.isMainThread)
+        lock.lock(); start = ProcessInfo.processInfo.systemUptime; lock.unlock()
+        defer { lock.lock(); end = ProcessInfo.processInfo.systemUptime; lock.unlock() }
+        return try DocumentLoader.prepare(request)
+    }
+}
+
 extension ReadingSmoke {
     @MainActor static func runLoading(root: URL) async throws {
         let fixture = root.appendingPathComponent("async-reading")
@@ -126,16 +144,25 @@ extension ReadingSmoke {
         let otherURL = root.appendingPathComponent("other-responsive-window.md")
         try "# Other window".write(to: otherURL, atomically: true, encoding: .utf8)
         let other = ReaderWindow(); other.open(otherURL)
-        try await wait("Independent window before large render") { other.snapshot?.url == otherURL && !other.isLoading }
-        let large = ReaderWindow()
+        try await wait("Independent window before large render") {
+            guard other.snapshot?.url == otherURL && !other.isLoading else { return false }
+            return (try? await js(other.preview.webView, "document.body.innerText.includes('Other window')")) as? Bool == true
+        }
+        let timing = PreparationTiming()
+        let large = ReaderWindow(loader: DocumentLoader(prepare: timing.prepare))
         var lastTick = ProcessInfo.processInfo.systemUptime
-        var maximumGap = 0.0, ticks = 0
+        var maximumGap = 0.0, totalMaximumGap = 0.0, ticks = 0
         var controlWorkedDuringPreparation = false
         let heartbeat = DispatchSource.makeTimerSource(queue: .main)
         heartbeat.schedule(deadline: .now(), repeating: .milliseconds(5), leeway: .milliseconds(1))
         heartbeat.setEventHandler {
             let now = ProcessInfo.processInfo.systemUptime
-            maximumGap = max(maximumGap, now - lastTick); lastTick = now; ticks += 1
+            totalMaximumGap = max(totalMaximumGap, now - lastTick)
+            if let (start, end) = timing.interval {
+                let overlap = min(now, end ?? now) - max(lastTick, start)
+                if overlap > 0 { maximumGap = max(maximumGap, overlap); ticks += 1 }
+            }
+            lastTick = now
         }
         heartbeat.resume()
         defer { heartbeat.cancel(); large.close(); other.close() }
@@ -143,16 +170,17 @@ extension ReadingSmoke {
         large.open(home)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
             other.preview.toggleReadingWidth(nil)
-            controlWorkedDuringPreparation = large.isLoading && other.preview.readingWidthMode == .fluid
+            controlWorkedDuringPreparation = timing.interval.map { $0.1 == nil } == true
+                && large.isLoading && other.preview.readingWidthMode == .fluid
         }
         try await wait("Large real reader renders all links") {
             guard large.snapshot?.url == home && !large.isLoading else { return false }
             return (try? await js(large.preview.webView, "document.querySelectorAll('a.wikilink').length === 100")) as? Bool == true
         }
         let elapsed = ProcessInfo.processInfo.systemUptime - started
+        print("Real ReaderWindow 10000-file/100-link load: \(elapsed) s; preparation main-thread maximum heartbeat gap: \(maximumGap) s; whole-load maximum: \(totalMaximumGap) s; preparation ticks: \(ticks)")
         try expect(controlWorkedDuringPreparation, "Another window's control must work during real vault preparation")
         try expect(ticks >= 5 && maximumGap < 0.1, "Real reader main-thread heartbeat exceeded 100 ms: \(maximumGap)")
-        print("Real ReaderWindow 10000-file/100-link load: \(elapsed) s; main-thread maximum heartbeat gap: \(maximumGap) s; ticks: \(ticks)")
     }
 
 }
