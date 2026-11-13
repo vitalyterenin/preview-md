@@ -17,11 +17,10 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
                 throw CocoaError(.fileReadInapplicableStringEncoding)
             }
 
-            let html = MarkdownHTML.document(
-                markdown: markdown,
-                title: request.fileURL.deletingPathExtension().lastPathComponent,
-                tableColumnWidths: DocumentState.tableColumnWidths(fromSidecarFor: request.fileURL) ?? []
-            )
+            let content = MarkdownHTML.render(markdown, fileURL: request.fileURL)
+            let state = DocumentState.restoreTableColumnWidths(for: request.fileURL, identifiers: content.tableIdentifiers)
+            let html = MarkdownHTML.document(content: content, title: request.fileURL.deletingPathExtension().lastPathComponent,
+                                             tableColumnWidths: state.widths)
             let reply = QLPreviewReply(
                 dataOfContentType: .html,
                 contentSize: CGSize(width: 900, height: 700)

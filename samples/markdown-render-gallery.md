@@ -1,6 +1,6 @@
 # Markdown render gallery
 
-This file is a visual checklist for PreviewMD. The first part uses syntax that the app currently renders. The last part shows important GitHub-style extensions that are still planned.
+This file is a visual checklist for PreviewMD. The first part uses syntax that the app currently renders. The last part distinguishes profile-specific syntax from unsupported extensions.
 
 ---
 
@@ -22,13 +22,22 @@ Unordered lists:
 
 - First point
 - Second point
+  - Nested point
+    - Third level
 - Third point
 
 Ordered lists:
 
-1. Read the document
-2. Use the Edit button when changes are needed
-3. Return to PreviewMD to read the rendered result
+3. Read the document
+4. Use Open in Editor… when changes are needed
+5. Return to PreviewMD to read the rendered result
+
+[Jump to table alignment](#table-alignment) or [open the short demo](formatting-demo.md).
+
+A [reference link][commonmark] and a hard break:\
+this starts a new line.
+
+[commonmark]: https://commonmark.org/
 
 ## Quote and rule
 
@@ -54,9 +63,11 @@ struct Document {
 
 ---
 
-## GitHub-style extensions to add next
+## Profile-specific and unsupported syntax
 
-These examples are intentionally shown as source for now, so it is clear which syntax is planned rather than silently falling back to plain text.
+Tasks and footnotes below render in GitHub and Obsidian profiles when used outside
+a code fence. Alerts, arbitrary HTML details, math and Mermaid remain unsupported.
+For supported Obsidian annotations and links, see the [profile demo](obsidian-demo.md).
 
 ````md
 - [x] Completed task

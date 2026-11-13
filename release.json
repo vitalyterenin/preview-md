@@ -1,6 +1,6 @@
 {
-  "version": "0.1.3",
-  "build": "4",
+  "version": "0.1.4",
+  "build": "5",
   "firstReleaseBuild": "3",
   "id": "preview-md",
   "name": "PreviewMD",
