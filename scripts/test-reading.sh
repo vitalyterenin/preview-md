@@ -17,6 +17,6 @@ swiftc -D PREVIEWMD_TESTING -I "$markdown_tools/include" "$markdown_tools/libcma
   -I "$yaml_tools/modules" -I "$yaml_tools/include" "$yaml_tools/libYams.a" \
   -framework AppKit -framework WebKit -F "$sparkle_tools" -framework Sparkle \
   -Xlinker -rpath -Xlinker "$sparkle_tools" \
-  sources/shared/*.swift sources/app/*.swift tests/reading-smoke.swift tests/obsidian-smoke.swift \
+  sources/shared/*.swift sources/app/*.swift tests/reading-smoke.swift tests/obsidian-smoke.swift tests/obsidian-fragments.swift tests/loading-smoke.swift \
   -o "$app/Contents/MacOS/ReadingTests"
 "$app/Contents/MacOS/ReadingTests" "$root"

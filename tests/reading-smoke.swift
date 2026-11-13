@@ -141,7 +141,7 @@ struct ReadingSmoke {
         reader.reload(force: true)
         try expect(try await js(web, "document.body.innerText.includes('AFTER')") as? Bool == true, "Missing file must preserve last readable content")
         func messages(_ view: NSView) -> [String] { (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap(messages) }
-        try expect(messages(reader.preview.view).contains(where: { $0.contains("last readable version") }), "Stale document must be disclosed")
+        try await wait("Stale document must be disclosed") { messages(reader.preview.view).contains(where: { $0.contains("last readable version") }) }
         _ = try await js(web, "document.querySelector('.table-resize-handle').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true}))")
         try await Task.sleep(nanoseconds: 200_000_000)
         try expect(messages(reader.preview.view).contains(where: { $0.contains("last readable version") }), "Saving a layout must not hide a stale-file warning")
@@ -186,6 +186,7 @@ struct ReadingSmoke {
         quick.loadHTMLString(MarkdownHTML.document(markdown: "![Missing illustration](absent.svg)", title: "Missing", fileURL: a), baseURL: nil)
         try await wait("missing image explanation") { try await js(quick, "document.body.innerText.includes('Image unavailable: Missing illustration')") as? Bool == true }
         try expect(try String(contentsOf: a, encoding: .utf8) == source.replacingOccurrences(of: "BEFORE", with:"AFTER"), "Reader must never change Markdown source")
+        try await runLoading(root: root)
         try await runObsidian(root: root)
         print("Verified semantics, local SVG in both HTML contexts, CSP-safe markup, table identity/bridge/recovery, native find, atomic refresh/position, links/Back, stale-file recovery and source preservation")
     }

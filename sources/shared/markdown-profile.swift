@@ -37,8 +37,18 @@ enum MarkdownSyntax {
     static func matches(_ pattern: String, in text: String) -> [NSTextCheckingResult] {
         (try? NSRegularExpression(pattern: pattern).matches(in: text, range: NSRange(text.startIndex..., in: text))) ?? []
     }
-    static func withTree<T>(_ source: String, _ body: (OpaquePointer) -> T) -> T {
-        let parser = cmark_parser_new(CMARK_OPT_DEFAULT)!
+    private static let registered: Void = { cmark_gfm_core_extensions_ensure_registered() }()
+
+    static func parser(profile: MarkdownProfile) -> OpaquePointer {
+        _ = registered
+        let parser = cmark_parser_new(profile == .commonMark ? CMARK_OPT_DEFAULT : CMARK_OPT_FOOTNOTES)!
+        for name in (profile == .commonMark ? [] : ["table", "strikethrough", "autolink", "tasklist"]) {
+            cmark_parser_attach_syntax_extension(parser, cmark_find_syntax_extension(name))
+        }
+        return parser
+    }
+    static func withTree<T>(_ source: String, profile: MarkdownProfile = .commonMark, _ body: (OpaquePointer) -> T) -> T {
+        let parser = parser(profile: profile)
         defer { cmark_parser_free(parser) }
         source.withCString { cmark_parser_feed(parser, $0, source.utf8.count) }
         let root = cmark_parser_finish(parser)!

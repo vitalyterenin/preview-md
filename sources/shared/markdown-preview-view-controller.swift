@@ -21,8 +21,10 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
     private var documentURL: URL?
     private var messageToken = UUID().uuidString
     private var tableIdentifiers: [String] = []
+    private(set) var tablePreferencesRevision = 0
     private var pendingPosition: [String: Double] = [:]
     private var pendingAnchor: String?
+    private var activeNavigation: WKNavigation?
     private(set) var readingWidthMode: DocumentState.ReadingWidthMode = .fixed
     var openRequested: (() -> Void)?
     var backRequested: (() -> Void)?
@@ -86,34 +88,31 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
         updateControls()
     }
 
-    func show(markdown: String, fileURL: URL, position: [String: Double]? = nil, anchor: String? = nil) {
+    func show(document: PreparedDocument, position: [String: Double]? = nil, anchor: String? = nil) {
+        let fileURL = document.snapshot.url
+        let content = document.content
         readFailure = nil
         documentURL = fileURL
-        messageToken = UUID().uuidString
+        messageToken = document.token
         pendingPosition = position ?? DocumentState.position(for: fileURL)
         pendingAnchor = anchor
         let defaults = UserDefaults.standard
         webView.pageZoom = min(2, max(0.6, (defaults.object(forKey: DocumentState.zoomPreferenceKey(for: fileURL)) as? NSNumber)?.doubleValue ?? 1))
         readingWidthMode = DocumentState.ReadingWidthMode(rawValue: defaults.string(forKey: DocumentState.readingWidthPreferenceKey(for: fileURL)) ?? "") ?? .fixed
-        let requested = MarkdownProfile.preference(for: fileURL)
-        profilePicker.selectItem(withTitle: requested.rawValue)
-        let content = MarkdownHTML.render(markdown, fileURL: fileURL, profile: requested)
+        profilePicker.selectItem(withTitle: document.requestedProfile.rawValue)
         resolvedProfile = content.decision.profile
         profileReason.stringValue = "\(content.decision.profile.rawValue) · \(content.decision.reason)"
         tableIdentifiers = content.tableIdentifiers
-        let restored = DocumentState.restoreTableColumnWidths(for: fileURL, identifiers: tableIdentifiers)
-        showNotice(restored.warning)
+        showNotice(document.warning)
         updateControls()
-        webView.loadHTMLString(MarkdownHTML.document(content: content, title: fileURL.lastPathComponent,
-                                                    fillsAvailableWidth: readingWidthMode == .fluid,
-                                                    tableColumnWidths: restored.widths, messageToken: messageToken), baseURL: fileURL)
+        activeNavigation = webView.loadHTMLString(document.html, baseURL: fileURL)
     }
 
     func showEmptyState() {
         readFailure = nil
         documentURL = nil; tableIdentifiers = []; webView.pageZoom = 1
         updateControls(); showNotice(nil)
-        webView.loadHTMLString(MarkdownHTML.emptyDocument(), baseURL: nil)
+        activeNavigation = webView.loadHTMLString(MarkdownHTML.emptyDocument(), baseURL: nil)
     }
 
     func showError(_ error: Error) {
@@ -121,7 +120,7 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
             readFailure = "Showing the last readable version. " + error.localizedDescription + " Use Reload to retry."
             showNotice(nil)
         }
-        else { webView.loadHTMLString(MarkdownHTML.errorDocument(message: error.localizedDescription), baseURL: nil) }
+        else { activeNavigation = webView.loadHTMLString(MarkdownHTML.errorDocument(message: error.localizedDescription), baseURL: nil) }
     }
 
     func showNotice(_ message: String?) {
@@ -132,7 +131,10 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
 
     func capturePosition(_ completion: @escaping ([String: Double]) -> Void) {
         let url = documentURL
-        webView.evaluateJavaScript("window.previewMD?.position()") { result, _ in
+        let token = messageToken
+        let quoted = String(data: try! JSONEncoder().encode(token), encoding: .utf8)!
+        webView.evaluateJavaScript("window.previewMD?.documentToken === \(quoted) ? window.previewMD.position() : null") { [weak self] result, _ in
+            guard self?.messageToken == token else { completion([:]); return }
             let position = result as? [String: Double] ?? [:]
             if let url, !position.isEmpty { DocumentState.savePosition(position, for: url) }
             completion(position)
@@ -200,6 +202,8 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === activeNavigation else { return }
+        webView.evaluateJavaScript("window.previewMD?.setReadingWidthMode('\(readingWidthMode.rawValue)')")
         let encoded = String(data: try! JSONEncoder().encode(pendingPosition), encoding: .utf8)!
         webView.evaluateJavaScript("window.previewMD?.restorePosition(\(encoded))")
         if let anchor = pendingAnchor { goToAnchor(anchor); pendingAnchor = nil }
@@ -225,6 +229,7 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
               let identifiers = body["identifiers"] as? [String], identifiers == tableIdentifiers else { return }
         do {
             try DocumentState.saveTableColumnWidths(widths, for: documentURL, identifiers: identifiers)
+            tablePreferencesRevision += 1
             showNotice(nil)
         } catch { showNotice("Table widths apply for this session only. Could not save preferences: " + error.localizedDescription) }
     }

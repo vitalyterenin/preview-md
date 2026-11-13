@@ -52,6 +52,8 @@ PreviewMD remains active, or to refresh a changed image. If a file disappears or
 becomes unreadable, the last readable version stays visible with an error and a
 retry instruction. Local non-Markdown links are left for Finder; web and email
 links open in their external apps. Missing heading targets display a notice.
+Other windows remain usable while a document loads. A newer file or profile
+choice takes precedence over a load that is still in progress.
 
 Zoom scales the full document, including typography, code blocks and spacing.
 Window position, zoom, reading width and scroll position are remembered per file
@@ -191,6 +193,9 @@ the PNG master to regenerate all icon sizes and the embedded resource.
 [Release operations](docs/releases.md) describe GitHub Actions builds, persistent
 signing, the stable DMG/feed, verification and recovery. Release artifacts are
 built in GitHub Actions.
+
+The [code audit](docs/refactoring-review.md) records the local candidate's
+initial findings, local corrections and verification results.
 
 ## License
 

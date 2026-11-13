@@ -5,12 +5,50 @@ import CryptoKit
 /// A bounded adapter over cmark's block/inline structure. It never evaluates
 /// note HTML, plugins, CSS snippets, templates or code fences.
 enum ObsidianMarkdown {
-    struct Replacement { let token: String; let html: String; let block: Bool; var text: String = "" }
-    struct Prepared { var source: String; let prefix: String; var replacements: [Replacement] }
+    struct Replacement {
+        let token: String
+        var html: String
+        let block: Bool
+        var text: String = ""
+        var source: String = ""
+        var reference: String? = nil
+    }
+    struct Prepared {
+        var source: String
+        var prefix: String
+        var replacements: [Replacement]
+
+        func headingText(_ raw: String) -> String {
+            replacements.reduce(raw) { $0.replacingOccurrences(of: $1.token, with: $1.text) }
+        }
+        func restoredSource(_ fragment: String) -> String {
+            replacements.reduce(fragment) { $0.replacingOccurrences(of: $1.token, with: $1.source) }
+        }
+    }
 
     static func prepare(_ source: String, fileURL: URL?, resolver: VaultResolver?, stack: [String]) -> Prepared {
         let properties = MarkdownProperties.extract(source, resolver: resolver, fileURL: fileURL)
-        var prepared = Prepared(source: properties.body, prefix: properties.html, replacements: [])
+        var prepared = prepareSyntax(properties.body)
+        prepared.prefix = properties.html
+        var embedCounts: [String: Int] = [:]
+        for index in prepared.replacements.indices {
+            guard let contents = prepared.replacements[index].reference else { continue }
+            embedCounts[contents, default: 0] += 1
+            if let fileURL, let resolver {
+                prepared.replacements[index].html = prepared.replacements[index].block
+                    ? embed(contents, resolver: resolver, fileURL: fileURL, stack: stack, instance: embedCounts[contents]!)
+                    : link(contents, resolver: resolver, fileURL: fileURL)
+            } else {
+                prepared.replacements[index].html = warning("A saved local document is required to resolve " + prepared.replacements[index].source)
+            }
+        }
+        return prepared
+    }
+
+    /// Selection and rendering share syntax preparation. This stage never reads
+    /// linked notes or spends embed budgets; replacements retain their source.
+    private static func prepareSyntax(_ body: String) -> Prepared {
+        var prepared = Prepared(source: body, prefix: "", replacements: [])
         // Comments may contain Markdown/code; only their opening and closing
         // delimiters must be outside a code span/block.
         let delimiters = Set(MarkdownSyntax.proseMatches("%%", source: prepared.source).map { $0.range.location })
@@ -19,26 +57,21 @@ enum ObsidianMarkdown {
             guard delimiters.contains(range.location), delimiters.contains(NSMaxRange(range) - 2) else { continue }
             prepared.source = (prepared.source as NSString).replacingCharacters(in: range, with: "")
         }
-        var embedCounts: [String: Int] = [:]
         for match in MarkdownSyntax.proseMatches(#"!?\[\[([^\]\n]+)\]\]"#, source: prepared.source).reversed() {
             let raw = (prepared.source as NSString).substring(with: match.range)
             let contents = (prepared.source as NSString).substring(with: match.range(at: 1)).replacingOccurrences(of: "\\|", with: "|")
-            let isEmbed = raw.hasPrefix("!")
-            embedCounts[contents, default: 0] += 1
-            let html: String
-            if let fileURL, let resolver {
-                html = isEmbed ? embed(contents, resolver: resolver, fileURL: fileURL, stack: stack, instance: embedCounts[contents]!) : link(contents, resolver: resolver, fileURL: fileURL)
-            } else { html = warning("A saved local document is required to resolve " + raw) }
             let token = "PMOFM" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-            prepared.replacements.append(.init(token: token, html: html, block: isEmbed, text: contents.split(separator: "|", omittingEmptySubsequences: false).last.map(String.init) ?? contents))
+            prepared.replacements.append(.init(token: token, html: "", block: raw.hasPrefix("!"),
+                                              text: contents.split(separator: "|", omittingEmptySubsequences: false).last.map(String.init) ?? contents,
+                                              source: raw, reference: contents))
             prepared.source = (prepared.source as NSString).replacingCharacters(in: match.range, with: token)
         }
         for match in MarkdownSyntax.proseMatches(#"==([^=\n]+)=="#, source: prepared.source).reversed() {
             let content = (prepared.source as NSString).substring(with: match.range(at: 1))
             let start = "PMMARK" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
             let end = "PMMARK" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-            prepared.replacements.append(.init(token: start, html: "<mark>", block: false))
-            prepared.replacements.append(.init(token: end, html: "</mark>", block: false))
+            prepared.replacements.append(.init(token: start, html: "<mark>", block: false, source: "=="))
+            prepared.replacements.append(.init(token: end, html: "</mark>", block: false, source: "=="))
             prepared.source = (prepared.source as NSString).replacingCharacters(in: match.range, with: start + content + end)
         }
         return prepared
@@ -92,28 +125,29 @@ enum ObsidianMarkdown {
         }
     }
 
-    /// Select a heading subtree or named block using cmark source positions,
-    /// rather than taking a regex slice that could match fenced examples.
+    /// Select from the same semantic body and cmark dialect as rendering. Source
+    /// positions refer to prepared text; restoring tokens keeps nested references
+    /// unresolved until the selected fragment is actually rendered.
     static func section(_ source: String, fragment: String) -> String? {
-        let lines = source.components(separatedBy: "\n")
-        return MarkdownSyntax.withTree(source) { root in
+        let properties = MarkdownProperties.extract(source, resolver: nil, fileURL: nil)
+        let prepared = prepareSyntax(properties.body)
+        let lines = prepared.source.components(separatedBy: "\n")
+        return MarkdownSyntax.withTree(prepared.source, profile: .obsidian) { root in
             var ranges: [ClosedRange<Int>] = []
             MarkdownSyntax.walk(root) { node in
                 let kind = MarkdownSyntax.kind(node)
                 if fragment.hasPrefix("^") {
-                    guard kind == "paragraph" || kind == "item" else { return }
-                    let text = MarkdownSyntax.text(node).trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard text == fragment || text.hasSuffix(" " + fragment) || text.hasSuffix("\n" + fragment) else { return }
+                    guard let marker = blockID(node, lines: lines), "^" + marker.id == fragment else { return }
                     var target = node
-                    if text == fragment, let previous = cmark_node_previous(node) { target = previous }
-                    // A list-item paragraph is represented by the item once.
-                    if kind == "paragraph", let parent = cmark_node_parent(node), MarkdownSyntax.kind(parent) == "item" { return }
+                    if marker.standalone, let previous = cmark_node_previous(node) { target = previous }
+                    else if let parent = cmark_node_parent(node), MarkdownSyntax.kind(parent) == "item" { target = parent }
                     let start = Int(cmark_node_get_start_line(target)) - 1
-                    let end = Int(cmark_node_get_end_line(target)) - 1
+                    let end = max(Int(cmark_node_get_end_line(target)), Int(cmark_node_get_end_line(node))) - 1
                     if start >= 0 && end >= start && end < lines.count { ranges.append(start...end) }
-                } else if kind == "heading", MarkdownHTML.anchor(headingText(MarkdownSyntax.text(node))) == MarkdownHTML.anchor(fragment) {
+                } else if kind == "heading", MarkdownHTML.anchor(prepared.headingText(MarkdownSyntax.text(node))) == MarkdownHTML.anchor(fragment) {
                     let start = Int(cmark_node_get_start_line(node)) - 1
-                    var end = lines.count - 1
+                    let parent = cmark_node_parent(node) ?? root
+                    var end = Int(cmark_node_get_end_line(parent)) - 1
                     var next = cmark_node_next(node)
                     while let current = next {
                         if MarkdownSyntax.kind(current) == "heading", cmark_node_get_heading_level(current) <= cmark_node_get_heading_level(node) {
@@ -121,30 +155,45 @@ enum ObsidianMarkdown {
                         }
                         next = cmark_node_next(current)
                     }
-                    if start >= 0 && end >= start { ranges.append(start...end) }
+                    if start >= 0 && end >= start && end < lines.count { ranges.append(start...end) }
                 }
             }
             guard ranges.count == 1, let range = ranges.first else { return nil }
-            return lines[range].joined(separator: "\n")
+            return prepared.restoredSource(lines[range].joined(separator: "\n"))
         }
     }
 
-    static func headingText(_ raw: String) -> String {
-        var text = raw
-        for match in MarkdownSyntax.matches(#"\[\[([^\]\n]+)\]\]"#, in: text).reversed() {
-            let value = (text as NSString).substring(with: match.range(at: 1))
-            let label = value.split(separator: "|", omittingEmptySubsequences: false).last.map(String.init) ?? value
-            text = (text as NSString).replacingCharacters(in: match.range, with: label)
-        }
-        return text.replacingOccurrences(of: "==", with: "")
+    private struct BlockID {
+        let id: String
+        let remaining: String
+        let standalone: Bool
+    }
+    /// A terminal text node alone cannot distinguish an escaped caret or an HTML
+    /// entity from a real marker. Check its original source line before decorating
+    /// or selecting it. cmark columns are UTF-8 byte offsets, including prefixes.
+    private static func blockID(_ paragraph: OpaquePointer, lines: [String]) -> BlockID? {
+        guard MarkdownSyntax.kind(paragraph) == "paragraph",
+              let last = cmark_node_last_child(paragraph), MarkdownSyntax.kind(last) == "text",
+              let literal = cmark_node_get_literal(last) else { return nil }
+        let text = String(cString: literal)
+        guard let match = MarkdownSyntax.matches(#"(?:^|\s)\^([A-Za-z0-9-]+)\s*$"#, in: text).first else { return nil }
+        let id = (text as NSString).substring(with: match.range(at: 1))
+        let line = Int(cmark_node_get_end_line(paragraph)) - 1
+        guard lines.indices.contains(line) else { return nil }
+        let raw = String(decoding: lines[line].utf8.prefix(Int(cmark_node_get_end_column(paragraph))), as: UTF8.self)
+        guard let original = MarkdownSyntax.matches(#"(?:^|\s)\^([A-Za-z0-9-]+)\s*$"#, in: raw).first,
+              (raw as NSString).substring(with: original.range(at: 1)) == id else { return nil }
+        let remaining = (text as NSString).replacingCharacters(in: match.range, with: "")
+        return BlockID(id: id, remaining: remaining, standalone: remaining.isEmpty && cmark_node_first_child(paragraph) == last)
     }
 
-    static func decorateTree(_ root: OpaquePointer) {
+    static func decorateTree(_ root: OpaquePointer, source: String) {
+        let lines = source.components(separatedBy: "\n")
         var nodes: [OpaquePointer] = []
         MarkdownSyntax.walk(root) { nodes.append($0) }
         // Transform children before their parent callout is moved.
         for node in nodes.reversed() {
-            if MarkdownSyntax.kind(node) == "paragraph" { decorateBlockID(node) }
+            if MarkdownSyntax.kind(node) == "paragraph", let marker = blockID(node, lines: lines) { decorateBlockID(node, marker: marker) }
             if MarkdownSyntax.kind(node) == "block_quote" { decorateCallout(node) }
         }
     }
@@ -153,20 +202,16 @@ enum ObsidianMarkdown {
         cmark_node_set_on_enter(node, enter); cmark_node_set_on_exit(node, exit)
         return node
     }
-    private static func decorateBlockID(_ paragraph: OpaquePointer) {
-        guard let last = cmark_node_last_child(paragraph), MarkdownSyntax.kind(last) == "text", let literal = cmark_node_get_literal(last) else { return }
-        let text = String(cString: literal)
-        guard let match = MarkdownSyntax.matches(#"(?:^|\s)\^([A-Za-z0-9-]+)\s*$"#, in: text).first else { return }
-        let id = (text as NSString).substring(with: match.range(at: 1))
-        let remaining = (text as NSString).replacingCharacters(in: match.range, with: "")
-        let anchor = custom(CMARK_NODE_CUSTOM_INLINE, enter: "<span id=\"block-\(id)\"></span>")
-        if remaining.isEmpty && cmark_node_first_child(paragraph) == last, let previous = cmark_node_previous(paragraph) {
-            let block = custom(CMARK_NODE_CUSTOM_BLOCK, enter: "<div id=\"block-\(id)\">", exit: "</div>")
+    private static func decorateBlockID(_ paragraph: OpaquePointer, marker: BlockID) {
+        guard let last = cmark_node_last_child(paragraph) else { return }
+        let anchor = custom(CMARK_NODE_CUSTOM_INLINE, enter: "<span id=\"block-\(marker.id)\"></span>")
+        if marker.standalone, let previous = cmark_node_previous(paragraph) {
+            let block = custom(CMARK_NODE_CUSTOM_BLOCK, enter: "<div id=\"block-\(marker.id)\">", exit: "</div>")
             cmark_node_insert_before(previous, block); cmark_node_unlink(previous); cmark_node_append_child(block, previous)
             cmark_node_unlink(paragraph)
             // Nodes in this traversal are already visited; release detached nodes now.
             cmark_node_free(paragraph); cmark_node_free(anchor)
-        } else { cmark_node_set_literal(last, remaining); cmark_node_prepend_child(paragraph, anchor) }
+        } else { cmark_node_set_literal(last, marker.remaining); cmark_node_prepend_child(paragraph, anchor) }
     }
     private static func decorateCallout(_ quote: OpaquePointer) {
         guard let paragraph = cmark_node_first_child(quote), MarkdownSyntax.kind(paragraph) == "paragraph",

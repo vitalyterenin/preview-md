@@ -6,13 +6,17 @@ final class ReaderWindow: NSWindowController, NSWindowDelegate {
     private(set) var snapshot: MarkdownSnapshot?
     private var history: [(URL, [String: Double])] = []
     private var generation = 0
+    private let loader: DocumentLoader
+    private var isClosed = false
+    private(set) var isLoading = false
     private(set) var isOpening = false
     private var changingFrame = false
     private var failedReload = false
     var closed: (() -> Void)?
     var openRequested: (() -> Void)?
 
-    init() {
+    init(loader: DocumentLoader = DocumentLoader()) {
+        self.loader = loader
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 900),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "PreviewMD"; window.minSize = NSSize(width: 900, height: 650)
@@ -30,55 +34,90 @@ final class ReaderWindow: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Use init()") }
 
+    private enum LoadKind {
+        case open(remember: Bool, position: [String: Double]?, anchor: String?)
+        case reload
+        case back(position: [String: Double])
+    }
+
     func open(_ url: URL, remember: Bool = false, position: [String: Double]? = nil, anchor: String? = nil) {
-        do {
-            let next = try MarkdownSnapshot.read(url)
-            isOpening = true
-            generation += 1
-            let expected = generation
-            preview.capturePosition { [weak self] previousPosition in
-                guard let self, self.generation == expected else { return }
-                if remember, let previous = self.snapshot { self.history.append((previous.url, previousPosition)) }
-                self.isOpening = false
-                self.saveFrame()
-                self.snapshot = next
-                self.changingFrame = true
-                DocumentState.migrateLegacySmallWindowFrameIfNeeded(for: next.url)
-                if let frame = DocumentState.savedWindowFrame(for: next.url) { self.window?.setFrame(from: frame) }
-                else { self.window?.setContentSize(NSSize(width: 1200, height: 900)); self.window?.center() }
-                self.changingFrame = false
-                self.window?.title = next.url.lastPathComponent
-                self.window?.representedURL = next.url
-                self.preview.show(markdown: next.text, fileURL: next.url, position: position, anchor: anchor)
-                self.preview.canGoBack = !self.history.isEmpty
-                self.showWindow(nil)
-            }
-        } catch { preview.showError(error); showWindow(nil) }
+        load(url, kind: .open(remember: remember, position: position, anchor: anchor), force: true)
     }
 
     func reload(force: Bool) {
-        guard !isOpening, let previous = snapshot else { return }
-        do {
-            let next = try MarkdownSnapshot.read(previous.url)
-            guard force || failedReload || preview.resolvedProfile == .obsidian || next.data != previous.data else { return }
-            generation += 1
-            let expected = generation
-            preview.capturePosition { [weak self] position in
-                guard let self, self.generation == expected else { return }
-                self.snapshot = next
-                self.failedReload = false
-                self.preview.show(markdown: next.text, fileURL: next.url, position: position)
+        guard let previous = snapshot, force || !isLoading else { return }
+        load(previous.url, kind: .reload,
+             force: force || failedReload || preview.resolvedProfile == .obsidian)
+    }
+
+    private func load(_ url: URL, kind: LoadKind, force: Bool) {
+        guard !isClosed else { return }
+        generation += 1
+        let expected = generation
+        let tableRevision = preview.tablePreferencesRevision
+        if case .reload = kind { isOpening = false } else { isOpening = true }
+        isLoading = true
+        preview.showNotice("Loading…")
+        let request = DocumentLoader.Request(url: url, profile: MarkdownProfile.preference(for: url),
+                                             previousData: snapshot?.data, force: force)
+        loader.submit(request) { [weak self] result in
+            guard let self, self.generation == expected, !self.isClosed else { return }
+            switch result {
+            case .failure(let error):
+                self.isOpening = false; self.isLoading = false
+                if case .back = kind {
+                    self.preview.showNotice("Cannot return to the previous document. " + error.localizedDescription)
+                } else {
+                    self.failedReload = true
+                    self.preview.showNotice(nil); self.preview.showError(error)
+                }
+            case .success(nil):
+                self.isOpening = false; self.isLoading = false; self.preview.showNotice(nil)
+            case .success(let prepared?):
+                if self.snapshot?.url == prepared.snapshot.url && self.preview.tablePreferencesRevision != tableRevision {
+                    self.load(url, kind: kind, force: true); return
+                }
+                // Capture at commit time: the user can keep reading/scanning the
+                // old page while preparation runs. A newer action invalidates
+                // both this callback and the final position callback.
+                self.preview.capturePosition { [weak self] previousPosition in
+                    guard let self, self.generation == expected, !self.isClosed else { return }
+                    if self.snapshot?.url == prepared.snapshot.url && self.preview.tablePreferencesRevision != tableRevision {
+                        self.load(url, kind: kind, force: true); return
+                    }
+                    var position: [String: Double]?, anchor: String?
+                    switch kind {
+                    case .open(let remember, let requestedPosition, let requestedAnchor):
+                        if remember, let previous = self.snapshot { self.history.append((previous.url, previousPosition)) }
+                        position = requestedPosition; anchor = requestedAnchor
+                    case .reload: position = previousPosition.isEmpty ? DocumentState.position(for: prepared.snapshot.url) : previousPosition
+                    case .back(let saved):
+                        self.history.removeLast(); position = saved
+                    }
+                    self.isOpening = false; self.isLoading = false; self.failedReload = false
+                    if case .reload = kind {} else { self.saveFrame() }
+                    self.snapshot = prepared.snapshot
+                    if case .reload = kind {} else {
+                        self.changingFrame = true
+                        DocumentState.migrateLegacySmallWindowFrameIfNeeded(for: prepared.snapshot.url)
+                        if let frame = DocumentState.savedWindowFrame(for: prepared.snapshot.url) { self.window?.setFrame(from: frame) }
+                        else { self.window?.setContentSize(NSSize(width: 1200, height: 900)); self.window?.center() }
+                        self.changingFrame = false
+                        self.window?.title = prepared.snapshot.url.lastPathComponent
+                        self.window?.representedURL = prepared.snapshot.url
+                    }
+                    self.preview.show(document: prepared, position: position, anchor: anchor)
+                    self.preview.canGoBack = !self.history.isEmpty
+                    self.showWindow(nil)
+                }
             }
-        } catch { failedReload = true; preview.showError(error) }
+        }
     }
 
     func back() {
         guard let entry = history.last else { return }
-        // Preserve the return route if the destination is no longer readable.
-        do { _ = try MarkdownSnapshot.read(entry.0) }
-        catch { preview.showNotice("Cannot return to the previous document. " + error.localizedDescription); return }
-        history.removeLast()
-        open(entry.0, position: entry.1)
+        // Keep the return route until the background read succeeds.
+        load(entry.0, kind: .back(position: entry.1), force: true)
     }
 
     func navigate(_ url: URL) {
@@ -90,6 +129,8 @@ final class ReaderWindow: NSWindowController, NSWindowDelegate {
         components.fragment = nil
         guard let target = components.url else { return }
         if target.standardizedFileURL == snapshot?.url {
+            generation += 1; loader.cancelPending(); isOpening = false; isLoading = false
+            preview.showNotice(nil)
             if let fragment { preview.goToAnchor(fragment) }
             return
         }
@@ -143,7 +184,9 @@ final class ReaderWindow: NSWindowController, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) { saveFrame() }
     func windowDidMove(_ notification: Notification) { saveFrame() }
     func windowWillClose(_ notification: Notification) {
-        generation += 1; saveFrame(); preview.capturePosition { _ in }; closed?()
+        isClosed = true; generation += 1; loader.cancelPending()
+        isOpening = false; isLoading = false
+        saveFrame(); preview.capturePosition { _ in }; closed?()
     }
 }
 

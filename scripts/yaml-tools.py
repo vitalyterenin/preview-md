@@ -2,6 +2,7 @@
 """Build reviewed Yams + its bundled libyaml with their dependency-free Swift package."""
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -14,15 +15,42 @@ import licenses
 VERSION = '6.2.2'
 ARCHIVE_SHA256 = 'c18b63003173ff886eb781e0cbb2cba612fb5c68485b0cd4e66ad06b686091e8'
 ROOT = Path(__file__).resolve().parent.parent
+TARGET = 'arm64-apple-macosx13.0'
+
+
+def build_environment():
+    swift = shutil.which('swift')
+    if swift is None:
+        raise ValueError('Swift is required to build Yams')
+    sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
+    identity = {
+        'script': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'swift': swift,
+        'swiftVersion': subprocess.check_output([swift, '--version'], text=True).strip(),
+        'sdk': sdk,
+        'sdkVersion': subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-version'], text=True).strip(),
+        'target': TARGET,
+    }
+    fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    return fingerprint, swift, sdk
+
+
+def complete_cache(cache):
+    required = [cache / 'libYams.a', *[cache / 'include' / name
+                for name in ('module.modulemap', 'CYaml.h', 'yaml.h')]]
+    module = cache / 'modules/Yams.swiftmodule'
+    # SwiftPM versions emit either a single module or an architecture directory.
+    required.append(module if module.is_file() else module / 'arm64-apple-macos.swiftmodule')
+    return all(path.is_file() and path.stat().st_size > 0 for path in required)
 
 
 def build():
     licenses.source_files()
     cache = Path(os.environ.get('PREVIEWMD_YAML_TOOLS_DIR', ROOT / 'build/tools' / ('yams-' + VERSION)))
     cache.mkdir(parents=True, exist_ok=True)
-    fingerprint = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    fingerprint, swift, sdk = build_environment()
     stamp = cache / 'build-stamp'
-    if stamp.exists() and stamp.read_text() == fingerprint and (cache / 'libYams.a').exists():
+    if stamp.exists() and stamp.read_text() == fingerprint and complete_cache(cache):
         return cache
     archive = cache / 'source.tar.gz'
     if not archive.exists():
@@ -44,11 +72,13 @@ def build():
     source = cache / ('Yams-' + VERSION)
     if hashlib.sha256((source / 'LICENSE').read_bytes()).hexdigest() != licenses.YAMS_LICENSE_SHA256:
         raise ValueError('Yams license differs from reviewed notice')
-    subprocess.run(['swift', 'build', '--package-path', str(source), '-c', 'release',
-                    '--triple', 'arm64-apple-macosx13.0'], check=True, stdout=sys.stderr)
-    output = Path(subprocess.check_output(['swift', 'build', '--package-path', str(source), '-c', 'release',
-                                           '--triple', 'arm64-apple-macosx13.0', '--show-bin-path'], text=True).strip())
+    command = [swift, 'build', '--package-path', str(source), '-c', 'release',
+               '--triple', TARGET, '--sdk', sdk]
+    subprocess.run(command, check=True, stdout=sys.stderr)
+    output = Path(subprocess.check_output([*command, '--show-bin-path'], text=True).strip())
     modules = cache / 'modules'
+    if modules.exists():
+        shutil.rmtree(modules)
     modules.mkdir(exist_ok=True)
     if (output / 'libYams.a').exists():
         shutil.copyfile(output / 'libYams.a', cache / 'libYams.a')
@@ -61,6 +91,8 @@ def build():
         subprocess.run(['xcrun', 'libtool', '-static', '-o', str(cache / 'libYams.a'), *map(str, objects)], check=True)
         shutil.copytree(output / 'Modules', modules, dirs_exist_ok=True)
     shutil.copytree(source / 'Sources/CYaml/include', cache / 'include', dirs_exist_ok=True)
+    if not complete_cache(cache):
+        raise ValueError('SwiftPM did not emit the complete Yams library, module and headers')
     stamp.write_text(fingerprint)
     return cache
 

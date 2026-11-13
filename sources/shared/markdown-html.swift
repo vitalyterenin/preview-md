@@ -9,26 +9,20 @@ struct RenderedMarkdown {
 }
 
 enum MarkdownHTML {
-    private static let registered: Void = { cmark_gfm_core_extensions_ensure_registered() }()
-
     static func render(_ markdown: String, fileURL: URL? = nil, profile: MarkdownProfile = .auto,
                        resolver: VaultResolver? = nil, stack: [String] = [], decorateTables: Bool = true) -> RenderedMarkdown {
-        _ = registered
         let decision = MarkdownProfile.resolve(profile, source: markdown, fileURL: fileURL)
         let vault = decision.profile == .obsidian ? (resolver ?? fileURL.map(VaultResolver.init)) : nil
         let chain = stack.isEmpty ? fileURL.map { [$0.resolvingSymlinksInPath().absoluteString] } ?? [] : stack
         let prepared = decision.profile == .obsidian ? ObsidianMarkdown.prepare(markdown, fileURL: fileURL, resolver: vault, stack: chain) : nil
         let source = prepared?.source ?? markdown
         let options = decision.profile == .commonMark ? CMARK_OPT_DEFAULT : CMARK_OPT_FOOTNOTES
-        let parser = cmark_parser_new(options)!
+        let parser = MarkdownSyntax.parser(profile: decision.profile)
         defer { cmark_parser_free(parser) }
-        for name in (decision.profile == .commonMark ? [] : ["table", "strikethrough", "autolink", "tasklist"]) {
-            cmark_parser_attach_syntax_extension(parser, cmark_find_syntax_extension(name))
-        }
         source.withCString { cmark_parser_feed(parser, $0, source.utf8.count) }
         let root = cmark_parser_finish(parser)!
         defer { cmark_node_free(root) }
-        if decision.profile == .obsidian { ObsidianMarkdown.decorateTree(root) }
+        if decision.profile == .obsidian { ObsidianMarkdown.decorateTree(root, source: source) }
         let iterator = cmark_iter_new(root)!
         defer { cmark_iter_free(iterator) }
         var replacements: [(String, String)] = []
@@ -49,7 +43,7 @@ enum MarkdownHTML {
                     }
                 }
                 collect(node)
-                for replacement in prepared?.replacements ?? [] { text = text.replacingOccurrences(of: replacement.token, with: replacement.text) }
+                text = prepared?.headingText(text) ?? text
                 let base = anchor(text)
                 var id = base
                 var suffix = 1
@@ -198,6 +192,7 @@ enum MarkdownHTML {
           const frames = Array.from(document.querySelectorAll('.table-frame'));
 
           window.previewMD = {
+            documentToken: messageToken,
             position() { return { x: scrollX, y: scrollY }; },
             restorePosition(position) { scrollTo(position.x || 0, position.y || 0); },
             goToAnchor(fragment) {

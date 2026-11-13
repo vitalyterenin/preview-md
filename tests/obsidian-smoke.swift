@@ -3,6 +3,7 @@ import WebKit
 
 extension ReadingSmoke {
     @MainActor static func runObsidian(root: URL) async throws {
+        try ObsidianFragmentChecks.run(root: root)
         let vault = root.appendingPathComponent("synthetic-vault")
         for path in [".obsidian", "notes", "assets", "one", "two"] {
             try FileManager.default.createDirectory(at: vault.appendingPathComponent(path), withIntermediateDirectories: true)

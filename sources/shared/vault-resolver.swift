@@ -6,7 +6,7 @@ final class VaultResolver {
     struct Target { let url: URL; let fragment: String? }
     enum Resolution { case found(Target), failure(String) }
     let root: URL
-    private var files: [URL]?
+    private var filesByName: [String: [URL]]?
     private var indexIncomplete = false
     private var reads = 0
     private var bytesRead = 0
@@ -29,9 +29,12 @@ final class VaultResolver {
         let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
         return resolved.hasPrefix(root.path + "/")
     }
-    private func indexedFiles() -> [URL] {
-        if let files { return files }
-        var result: [URL] = []
+    private static func nameKey(_ name: String) -> String {
+        name.folding(options: .caseInsensitive, locale: nil)
+    }
+    private func indexedFiles() -> [String: [URL]] {
+        if let filesByName { return filesByName }
+        var result: [String: [URL]] = [:]
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
         if let items = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles], errorHandler: { [weak self] _, _ in self?.indexIncomplete = true; return true }) {
             var visited = 0
@@ -40,10 +43,12 @@ final class VaultResolver {
                 if visited > 20000 { indexIncomplete = true; break }
                 guard let values = try? url.resourceValues(forKeys: Set(keys)) else { indexIncomplete = true; continue }
                 if values.isSymbolicLink == true { items.skipDescendants(); continue }
-                if values.isRegularFile == true && contains(url) { result.append(url.standardizedFileURL) }
+                if values.isRegularFile == true && contains(url) {
+                    result[Self.nameKey(url.lastPathComponent), default: []].append(url.standardizedFileURL)
+                }
             }
         } else { indexIncomplete = true }
-        files = result
+        filesByName = result
         return result
     }
     func resolve(_ raw: String, from current: URL) -> Resolution {
@@ -65,7 +70,8 @@ final class VaultResolver {
         }
         // Do not silently pick a nearby duplicate. A path is required when a
         // basename occurs more than once anywhere in the allowed scope.
-        let candidates = indexedFiles().filter { file in names.contains(where: { name in name.caseInsensitiveCompare(file.lastPathComponent) == .orderedSame }) }
+        let index = indexedFiles()
+        let candidates = names.flatMap { index[Self.nameKey($0)] ?? [] }
         if indexIncomplete { return .failure("Vault index is incomplete; use an explicit relative path: " + raw) }
         return choose(candidates, raw: raw, fragment: fragment)
     }
