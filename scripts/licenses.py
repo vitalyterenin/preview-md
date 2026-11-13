@@ -12,6 +12,8 @@ import shutil
 ROOT = Path(__file__).resolve().parent.parent
 FILES = ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md')
 # The owner approved Apache-2.0 for PreviewMD; changes need a new approval.
+CMARK_REVISION = '27d942c8b0a62d192f616e5bf3578f4b6a89e180'
+CMARK_COPYING_SHA256 = 'c22e885f33b821bddb24cf007145e5540655b6c0f403e49e6c76a93c28e6d9a9'
 APACHE_SHA256 = 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'
 
 
@@ -27,6 +29,16 @@ def source_files():
     sparkle = data['sparkleVersion']
     if f'## Sparkle {sparkle}\n'.encode() not in files['THIRD_PARTY_NOTICES.md']:
         raise ValueError('Third-party notices do not match the pinned Sparkle version')
+    notices = files['THIRD_PARTY_NOTICES.md'].decode()
+    marker = '## cmark-gfm ' + CMARK_REVISION + '\n'
+    if marker not in notices:
+        raise ValueError('Missing pinned cmark-gfm notice')
+    try:
+        copying = notices.split(marker, 1)[1].split('```text\n', 1)[1].split('```', 1)[0]
+    except IndexError:
+        raise ValueError('Missing complete cmark-gfm COPYING')
+    if hashlib.sha256(copying.encode()).hexdigest() != CMARK_COPYING_SHA256:
+        raise ValueError('Changed or incomplete cmark-gfm COPYING')
     return files, sparkle
 
 

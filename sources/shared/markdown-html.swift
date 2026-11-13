@@ -1,353 +1,143 @@
 import Foundation
+import CryptoKit
+import CMark
+
+struct RenderedMarkdown {
+    let html: String
+    let tableIdentifiers: [String]
+}
 
 enum MarkdownHTML {
-    private struct CodeFence {
-        let marker: Character
-        let length: Int
-        let language: String
+    private static let registered: Void = { cmark_gfm_core_extensions_ensure_registered() }()
+
+    static func render(_ markdown: String, fileURL: URL? = nil) -> RenderedMarkdown {
+        _ = registered
+        let parser = cmark_parser_new(CMARK_OPT_DEFAULT)!
+        defer { cmark_parser_free(parser) }
+        for name in ["table", "strikethrough", "autolink"] {
+            cmark_parser_attach_syntax_extension(parser, cmark_find_syntax_extension(name))
+        }
+        markdown.withCString { cmark_parser_feed(parser, $0, markdown.utf8.count) }
+        let root = cmark_parser_finish(parser)!
+        defer { cmark_node_free(root) }
+        let iterator = cmark_iter_new(root)!
+        defer { cmark_iter_free(iterator) }
+        var replacements: [(String, String)] = []
+        var headings: [String] = []
+        var usedAnchors = Set<String>()
+        while cmark_iter_next(iterator) != CMARK_EVENT_DONE {
+            guard cmark_iter_get_event_type(iterator) == CMARK_EVENT_ENTER,
+                  let node = cmark_iter_get_node(iterator) else { continue }
+            let kind = String(cString: cmark_node_get_type_string(node))
+            if kind == "heading" {
+                var text = ""
+                func collect(_ parent: OpaquePointer) {
+                    var child = cmark_node_first_child(parent)
+                    while let current = child {
+                        if let literal = cmark_node_get_literal(current) { text += String(cString: literal) }
+                        collect(current)
+                        child = cmark_node_next(current)
+                    }
+                }
+                collect(node)
+                let base = anchor(text)
+                var id = base
+                var suffix = 1
+                while usedAnchors.contains(id) { id = "\(base)-\(suffix)"; suffix += 1 }
+                usedAnchors.insert(id)
+                headings.append(id)
+            }
+            if kind == "link" || kind == "image", let raw = cmark_node_get_url(node) {
+                let value = String(cString: raw)
+                let destination = kind == "image" ? imageURL(value, relativeTo: fileURL) : safeLink(value)
+                // Only app-validated attributes are substituted after cmark's safe renderer.
+                // Random tokens prevent document text from impersonating an asset placeholder.
+                let token = "previewmd-" + UUID().uuidString
+                cmark_node_set_url(node, token)
+                replacements.append((token, escape(destination)))
+            }
+        }
+        let result = cmark_render_html(root, CMARK_OPT_DEFAULT, cmark_parser_get_syntax_extensions(parser))!
+        var html = String(cString: result)
+        free(result)
+        for (token, value) in replacements { html = html.replacingOccurrences(of: token, with: value) }
+        let headingPattern = try! NSRegularExpression(pattern: "<h[1-6]>")
+        for (match, id) in zip(headingPattern.matches(in: html, range: NSRange(html.startIndex..., in: html)), headings).reversed() {
+            let range = Range(match.range, in: html)!
+            let tag = String(html[range].dropLast()) + " id=\"\(escape(id))\">"
+            html.replaceSubrange(range, with: tag)
+        }
+        var tableIDs: [String] = []
+        let tables = try! NSRegularExpression(pattern: "<table>.*?</table>", options: .dotMatchesLineSeparators)
+        let matches = tables.matches(in: html, range: NSRange(html.startIndex..., in: html))
+        for match in matches {
+            let table = String(html[Range(match.range, in: html)!])
+            tableIDs.append(SHA256.hash(data: Data(table.utf8)).map { String(format: "%02x", $0) }.joined())
+        }
+        for (match, id) in zip(matches, tableIDs).reversed() {
+            let range = Range(match.range, in: html)!
+            html.replaceSubrange(range, with: "<div class=\"table-frame\" data-table-id=\"\(id)\">\(html[range])</div>")
+        }
+        return RenderedMarkdown(html: html, tableIdentifiers: tableIDs)
     }
 
-    static func document(
-        markdown: String,
-        title: String,
-        fillsAvailableWidth: Bool = false,
-        tableColumnWidths: [[Double]] = []
-    ) -> String {
-        """
-        <!doctype html>
-        <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>\(escape(title))</title>
-          <style>\(styleSheet)</style>
-        </head>
-        <body class="\(fillsAvailableWidth ? "fluid-layout" : "")">
-          <main>\(renderBlocks(markdown))</main>
-          <script>\(tableInteractionScript(tableColumnWidths))</script>
-        </body>
-        </html>
+    static func anchor(_ text: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ "))
+        let value = String(text.lowercased().unicodeScalars.filter { allowed.contains($0) }).replacingOccurrences(of: " ", with: "-")
+        return value.isEmpty ? "section" : value
+    }
+
+    static func safeLink(_ value: String) -> String {
+        guard !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              let url = URL(string: value) else { return "previewmd-invalid:blocked" }
+        guard let scheme = url.scheme?.lowercased() else { return value }
+        return ["http", "https", "mailto", "file"].contains(scheme) ? value : "previewmd-invalid:blocked"
+    }
+
+    private static func imageURL(_ value: String, relativeTo fileURL: URL?) -> String {
+        guard let url = URL(string: value, relativeTo: fileURL?.deletingLastPathComponent())?.absoluteURL else { return "" }
+        if ["http", "https"].contains(url.scheme?.lowercased() ?? "") { return url.absoluteString }
+        guard url.isFileURL else { return "" }
+        let types = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml"]
+        guard let type = types[url.pathExtension.lowercased()],
+              let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 20 * 1024 * 1024,
+              let data = try? Data(contentsOf: url), data.count <= 20 * 1024 * 1024 else { return "" }
+        return "data:\(type);base64,\(data.base64EncodedString())"
+    }
+
+    static func document(markdown: String, title: String, fillsAvailableWidth: Bool = false,
+                         tableColumnWidths: [[Double]] = [], fileURL: URL? = nil) -> String {
+        document(content: render(markdown, fileURL: fileURL), title: title,
+                 fillsAvailableWidth: fillsAvailableWidth, tableColumnWidths: tableColumnWidths)
+    }
+
+    static func document(content: RenderedMarkdown, title: String, fillsAvailableWidth: Bool = false,
+                         tableColumnWidths: [[Double]] = [], messageToken: String = "") -> String {
+        let nonce = UUID().uuidString
+        return """
+        <!doctype html><html lang="en"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; script-src 'nonce-\(nonce)'; base-uri 'none'">
+        <title>\(escape(title))</title><style>\(styleSheet)</style></head>
+        <body class="\(fillsAvailableWidth ? "fluid-layout" : "")"><main>\(content.html)</main>
+        <script nonce="\(nonce)">\(tableInteractionScript(tableColumnWidths, messageToken: messageToken))</script></body></html>
         """
     }
 
     static func emptyDocument() -> String {
-        document(
-            markdown: "# PreviewMD\n\nOpen a Markdown file to read it as a formatted document.",
-            title: "PreviewMD"
-        )
+        document(markdown: "# PreviewMD\n\nOpen a Markdown file to read it. Use Open… or Command-O.", title: "PreviewMD")
     }
 
     static func errorDocument(message: String) -> String {
-        """
-        <!doctype html>
-        <html lang="en"><head><meta charset="utf-8"><style>\(styleSheet)</style></head>
-        <body><main><h1>Unable to open the file</h1><p>\(escape(message))</p></main></body></html>
-        """
+        document(content: RenderedMarkdown(html: "<h1>Unable to open the file</h1><p>\(escape(message))</p>", tableIdentifiers: []), title: "PreviewMD")
     }
 
-    private static func renderBlocks(_ markdown: String) -> String {
-        let lines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-        var blocks: [String] = []
-        var index = 0
-        var tableIdentifier = 0
-
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.isEmpty {
-                index += 1
-                continue
-            }
-
-            if let fence = codeFence(in: trimmed) {
-                index += 1
-                var code: [String] = []
-                while index < lines.count && !isClosingCodeFence(lines[index], for: fence) {
-                    code.append(lines[index])
-                    index += 1
-                }
-                if index < lines.count { index += 1 }
-                let className = fence.language.isEmpty ? "" : " class=\"language-\(escape(fence.language))\""
-                blocks.append("<pre><code\(className)>\(escape(code.joined(separator: "\n")))</code></pre>")
-                continue
-            }
-
-            if let table = renderTable(startingAt: index, lines: lines, identifier: tableIdentifier) {
-                blocks.append(table.html)
-                index = table.nextIndex
-                tableIdentifier += 1
-                continue
-            }
-
-            if let heading = heading(in: trimmed) {
-                blocks.append("<h\(heading.level)>\(renderInline(heading.text))</h\(heading.level)>")
-                index += 1
-                continue
-            }
-
-            if isHorizontalRule(trimmed) {
-                blocks.append("<hr>")
-                index += 1
-                continue
-            }
-
-            if trimmed.hasPrefix(">") {
-                var quoteLines: [String] = []
-                while index < lines.count {
-                    let quote = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard quote.hasPrefix(">") else { break }
-                    quoteLines.append(String(quote.dropFirst()).trimmingCharacters(in: .whitespaces))
-                    index += 1
-                }
-                blocks.append("<blockquote>\(renderBlocks(quoteLines.joined(separator: "\n")))</blockquote>")
-                continue
-            }
-
-            if let firstItem = listItem(in: line) {
-                let ordered = firstItem.ordered
-                var items: [String] = []
-                while index < lines.count, let item = listItem(in: lines[index]), item.ordered == ordered {
-                    items.append("<li>\(renderInline(item.text))</li>")
-                    index += 1
-                }
-                let tag = ordered ? "ol" : "ul"
-                blocks.append("<\(tag)>\(items.joined())</\(tag)>")
-                continue
-            }
-
-            var paragraph: [String] = []
-            while index < lines.count {
-                let candidate = lines[index]
-                let candidateTrimmed = candidate.trimmingCharacters(in: .whitespaces)
-                if candidateTrimmed.isEmpty || (paragraph.isEmpty ? false : startsBlock(candidate)) {
-                    break
-                }
-                paragraph.append(candidateTrimmed)
-                index += 1
-            }
-            blocks.append("<p>\(renderInline(paragraph.joined(separator: " ")))</p>")
-        }
-
-        return blocks.joined(separator: "\n")
+    static func escape(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    private static func renderTable(startingAt index: Int, lines: [String], identifier: Int) -> (html: String, nextIndex: Int)? {
-        guard index + 1 < lines.count else { return nil }
-        let headers = tableCells(in: lines[index])
-        guard headers.count >= 2,
-              let alignments = tableAlignments(for: lines[index + 1], columnCount: headers.count) else {
-            return nil
-        }
-
-        var nextIndex = index + 2
-        var rows: [[String]] = []
-        while nextIndex < lines.count {
-            let row = lines[nextIndex]
-            guard !row.trimmingCharacters(in: .whitespaces).isEmpty,
-                  row.contains("|") else { break }
-            let cells = tableCells(in: row)
-            guard cells.count >= 2 else { break }
-            rows.append(normalizeTableCells(cells, columnCount: headers.count))
-            nextIndex += 1
-        }
-
-        let normalizedHeaders = normalizeTableCells(headers, columnCount: headers.count)
-        let headerHTML = zip(normalizedHeaders, alignments).map { cell, alignment in
-            "<th\(alignment)>\(renderInline(cell))</th>"
-        }.joined()
-        let rowsHTML = rows.map { row in
-            let cells = zip(row, alignments).map { cell, alignment in
-                "<td\(alignment)>\(renderInline(cell))</td>"
-            }.joined()
-            return "<tr>\(cells)</tr>"
-        }.joined(separator: "\n")
-
-        return ("<div class=\"table-frame\" data-table-id=\"\(identifier)\"><table><thead><tr>\(headerHTML)</tr></thead><tbody>\(rowsHTML)</tbody></table></div>", nextIndex)
-    }
-
-    private static func tableCells(in line: String) -> [String] {
-        var content = line.trimmingCharacters(in: .whitespaces)
-        if content.first == "|" { content.removeFirst() }
-        if content.last == "|" { content.removeLast() }
-
-        var cells: [String] = []
-        var current = ""
-        var escaped = false
-        for character in content {
-            if escaped {
-                current.append(character)
-                escaped = false
-            } else if character == "\\" {
-                escaped = true
-            } else if character == "|" {
-                cells.append(current.trimmingCharacters(in: .whitespaces))
-                current = ""
-            } else {
-                current.append(character)
-            }
-        }
-        if escaped { current.append("\\") }
-        cells.append(current.trimmingCharacters(in: .whitespaces))
-        return cells
-    }
-
-    private static func tableAlignments(for separator: String, columnCount: Int) -> [String]? {
-        let columns = tableCells(in: separator)
-        guard columns.count == columnCount else { return nil }
-
-        var alignments: [String] = []
-        for column in columns {
-            let compact = column.replacingOccurrences(of: " ", with: "")
-            let hasLeadingColon = compact.hasPrefix(":")
-            let hasTrailingColon = compact.hasSuffix(":")
-            let dashes = compact.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-            guard dashes.count >= 3, dashes.allSatisfy({ $0 == "-" }) else { return nil }
-            switch (hasLeadingColon, hasTrailingColon) {
-            case (true, true): alignments.append(" style=\"text-align:center\"")
-            case (false, true): alignments.append(" style=\"text-align:right\"")
-            default: alignments.append("")
-            }
-        }
-        return alignments
-    }
-
-    private static func normalizeTableCells(_ cells: [String], columnCount: Int) -> [String] {
-        Array((cells + Array(repeating: "", count: max(0, columnCount - cells.count))).prefix(columnCount))
-    }
-
-    private static func startsBlock(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return codeFence(in: trimmed) != nil
-            || heading(in: trimmed) != nil
-            || trimmed.hasPrefix(">")
-            || isHorizontalRule(trimmed)
-            || listItem(in: line) != nil
-    }
-
-    private static func codeFence(in line: String) -> CodeFence? {
-        guard let marker = line.first, marker == "`" || marker == "~" else { return nil }
-
-        var length = 0
-        for character in line {
-            guard character == marker else { break }
-            length += 1
-        }
-        guard length >= 3 else { return nil }
-
-        let language = String(line.dropFirst(length)).trimmingCharacters(in: .whitespaces)
-        return CodeFence(marker: marker, length: length, language: language)
-    }
-
-    private static func isClosingCodeFence(_ line: String, for openingFence: CodeFence) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.first == openingFence.marker else { return false }
-
-        var length = 0
-        for character in trimmed {
-            guard character == openingFence.marker else { break }
-            length += 1
-        }
-        guard length >= openingFence.length else { return false }
-        return trimmed.dropFirst(length).allSatisfy(\.isWhitespace)
-    }
-
-    private static func heading(in line: String) -> (level: Int, text: String)? {
-        var level = 0
-        for character in line {
-            guard character == "#" else { break }
-            level += 1
-        }
-        guard (1...6).contains(level), line.dropFirst(level).first?.isWhitespace == true else { return nil }
-        return (level, String(line.dropFirst(level)).trimmingCharacters(in: .whitespaces))
-    }
-
-    private static func isHorizontalRule(_ line: String) -> Bool {
-        let compact = line.replacingOccurrences(of: " ", with: "")
-        guard compact.count >= 3, let character = compact.first, ["-", "*", "_"].contains(character) else {
-            return false
-        }
-        return compact.allSatisfy { $0 == character }
-    }
-
-    private static func listItem(in line: String) -> (ordered: Bool, text: String)? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        for marker in ["- ", "* ", "+ "] where trimmed.hasPrefix(marker) {
-            return (false, String(trimmed.dropFirst(marker.count)))
-        }
-
-        let pieces = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
-        guard pieces.count == 2, let last = pieces[0].last, last == "." || last == ")" else { return nil }
-        let number = pieces[0].dropLast()
-        guard !number.isEmpty, number.allSatisfy(\.isNumber) else { return nil }
-        return (true, String(pieces[1]))
-    }
-
-    private static func renderInline(_ text: String) -> String {
-        var protectedCode: [String] = []
-        var output = escape(text)
-
-        output = replace(pattern: "`([^`]+)`", in: output) { match in
-            let token = "\u{E000}\(protectedCode.count)\u{E001}"
-            protectedCode.append("<code>\(match[1])</code>")
-            return token
-        }
-
-        output = replace(pattern: "!\\[([^]]*)\\]\\(([^ )]+)(?:\\s+\\\"[^\\\"]*\\\")?\\)", in: output) { match in
-            "<img src=\"\(safeURL(match[2]))\" alt=\"\(match[1])\">"
-        }
-        output = replace(pattern: "\\[([^]]+)\\]\\(([^ )]+)\\)", in: output) { match in
-            "<a href=\"\(safeURL(match[2]))\">\(match[1])</a>"
-        }
-        output = replace(pattern: "\\*\\*(.+?)\\*\\*|__(.+?)__", in: output) { match in
-            "<strong>\(match[1].isEmpty ? match[2] : match[1])</strong>"
-        }
-        output = replace(pattern: "~~(.+?)~~", in: output) { match in
-            "<del>\(match[1])</del>"
-        }
-        output = replace(pattern: "(?<!\\*)\\*([^*]+)\\*(?!\\*)|(?<!_)_([^_]+)_(?!_)", in: output) { match in
-            "<em>\(match[1].isEmpty ? match[2] : match[1])</em>"
-        }
-
-        for index in protectedCode.indices.reversed() {
-            output = output.replacingOccurrences(of: "\u{E000}\(index)\u{E001}", with: protectedCode[index])
-        }
-        return output
-    }
-
-    private static func replace(pattern: String, in text: String, transform: ([String]) -> String) -> String {
-        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        let matches = expression.matches(in: text, range: range).reversed()
-        var output = text
-
-        for match in matches {
-            let captures = (0..<match.numberOfRanges).map { index -> String in
-                let captureRange = match.range(at: index)
-                guard captureRange.location != NSNotFound, let swiftRange = Range(captureRange, in: output) else { return "" }
-                return String(output[swiftRange])
-            }
-            guard let matchRange = Range(match.range, in: output) else { continue }
-            output.replaceSubrange(matchRange, with: transform(captures))
-        }
-        return output
-    }
-
-    private static func safeURL(_ url: String) -> String {
-        let decoded = url.replacingOccurrences(of: "&amp;", with: "&")
-        guard let scheme = URL(string: decoded)?.scheme?.lowercased() else { return url }
-        return ["http", "https", "mailto", "file"].contains(scheme) ? url : "#"
-    }
-
-    private static func escape(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-    }
-
-    private static func tableInteractionScript(_ tableColumnWidths: [[Double]]) -> String {
+    private static func tableInteractionScript(_ tableColumnWidths: [[Double]], messageToken: String) -> String {
         let encodedWidths: String
         if let data = try? JSONEncoder().encode(tableColumnWidths),
            let string = String(data: data, encoding: .utf8) {
@@ -359,10 +149,33 @@ enum MarkdownHTML {
         return """
         (() => {
           const storedWidths = \(encodedWidths);
+          const messageToken = \(String(data: try! JSONEncoder().encode(messageToken), encoding: .utf8)!);
+          let scrollTimer;
+          addEventListener('scroll', () => {
+            clearTimeout(scrollTimer);
+            scrollTimer = setTimeout(() => window.webkit?.messageHandlers?.previewMD?.postMessage({ type: 'position', token: messageToken, position: { x: scrollX, y: scrollY } }), 100);
+          });
           const minimumColumnPixels = 72;
+          document.querySelectorAll('img').forEach((img) => {
+            const failed = () => {
+              const fallback = document.createElement('span');
+              fallback.className = 'image-error';
+              fallback.textContent = `Image unavailable: ${img.alt || 'unnamed image'}`;
+              img.replaceWith(fallback);
+            };
+            img.addEventListener('error', failed);
+            if (img.complete && img.naturalWidth === 0) failed();
+          });
           const frames = Array.from(document.querySelectorAll('.table-frame'));
 
           window.previewMD = {
+            position() { return { x: scrollX, y: scrollY }; },
+            restorePosition(position) { scrollTo(position.x || 0, position.y || 0); },
+            goToAnchor(fragment) {
+              const target = document.getElementById(fragment);
+              if (target) target.scrollIntoView();
+              return !!target;
+            },
             setReadingWidthMode(mode) {
               document.body.classList.toggle('fluid-layout', mode === 'fluid');
             }
@@ -379,7 +192,7 @@ enum MarkdownHTML {
 
           const persist = () => {
             const handler = window.webkit?.messageHandlers?.previewMD;
-            if (handler) handler.postMessage({ type: 'tableColumnWidths', tables: allWidths() });
+            if (handler) handler.postMessage({ type: 'tableColumnWidths', token: messageToken, tables: allWidths(), identifiers: frames.map(f => f.dataset.tableId) });
           };
 
           frames.forEach((frame, frameIndex) => {
@@ -415,6 +228,17 @@ enum MarkdownHTML {
               handle.className = 'table-resize-handle';
               handle.setAttribute('role', 'separator');
               handle.setAttribute('aria-label', `Resize column ${index + 1}`);
+              handle.tabIndex = 0;
+              handle.setAttribute('aria-orientation', 'vertical');
+              handle.addEventListener('keydown', (event) => {
+                if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+                event.preventDefault();
+                const widths = readWidths();
+                const delta = event.key === 'ArrowRight' ? 2 : -2;
+                if (widths[index] + delta < 5 || widths[index + 1] - delta < 5) return;
+                widths[index] += delta; widths[index + 1] -= delta;
+                writeWidths(widths); positionHandles(); persist();
+              });
               frame.append(handle);
               handles.push(handle);
             }
@@ -443,12 +267,11 @@ enum MarkdownHTML {
               const move = (moveEvent) => {
                 const delta = ((moveEvent.clientX - startingX) / tableWidth) * 100;
                 const left = Math.max(minimumPercent, startingWidths[index] + delta);
-                const right = Math.max(minimumPercent, startingWidths[index + 1] - delta);
                 const appliedDelta = left - startingWidths[index];
                 const nextWidths = [...startingWidths];
                 nextWidths[index] = left;
                 nextWidths[index + 1] = startingWidths[index + 1] - appliedDelta;
-                if (right < minimumPercent) return;
+                if (nextWidths[index + 1] < minimumPercent) return;
                 writeWidths(nextWidths);
                 positionHandles();
               };
@@ -467,6 +290,7 @@ enum MarkdownHTML {
               setHoveredDivider(dividerIndexAt(event));
             });
             table.addEventListener('mouseleave', () => setHoveredDivider(-1));
+            handles.forEach((handle, index) => handle.addEventListener('mousedown', (event) => { if (event.button === 0) beginResize(index, event); }));
             table.addEventListener('mousedown', (event) => {
               if (event.button !== 0) return;
               const index = dividerIndexAt(event);
@@ -504,12 +328,13 @@ enum MarkdownHTML {
     .table-frame { position: relative; margin: 0 0 1.2em; overflow: hidden; border: 1px solid #d8dee4; border-radius: 8px; }
     table { width: 100%; margin: 0; border-collapse: collapse; table-layout: fixed; }
     th, td { padding: .55em .7em; text-align: left; border-right: 1px solid #d8dee4; border-bottom: 1px solid #d8dee4; vertical-align: top; } th { font-weight: 600; background: #f6f8fa; }
+    th[align="right"], td[align="right"] { text-align: right; } th[align="center"], td[align="center"] { text-align: center; }
     th:last-child, td:last-child { border-right: 0; } tbody tr:last-child td { border-bottom: 0; }
-    .table-resize-handle { pointer-events: none; position: absolute; top: 0; bottom: 0; z-index: 2; width: 12px; }
+    .table-resize-handle { pointer-events: auto; position: absolute; top: 0; bottom: 0; z-index: 2; width: 12px; }
     .table-resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 1px; background: transparent; }
     .table-resize-handle.is-hovered::after, .resizing-table .table-resize-handle.is-hovered::after { background: #0969da; }
     .resizing-table, .resizing-table * { user-select: none !important; }
-    img { max-width: 100%; border-radius: 8px; }
+    img { max-width: 100%; border-radius: 8px; } .image-error { display: block; padding: 12px; border: 1px solid currentColor; } .table-resize-handle:focus-visible { outline: 2px solid #0969da; } th, td { overflow-wrap: anywhere; }
     @media (prefers-color-scheme: dark) {
       body { background: #1e1e1e; color: #e6edf3; } a { color: #58a6ff; }
       code, pre, th { background: #2b2b2b; } blockquote { color: #a7b0ba; border-color: #4b5563; } hr, .table-frame, th, td { border-color: #3b434c; }
