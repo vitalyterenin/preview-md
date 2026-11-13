@@ -185,7 +185,8 @@ The build downloads pinned, checksum-verified Sparkle binaries, cmark-gfm and Ya
 sources, and uses Apple's AppKit, WebKit and QuickLookUI frameworks. It produces `build/PreviewMD.app` with
 an ad hoc development signature. Keep development output separate from the
 installed stable app. The icon source is `assets/previewmd-icon.png`; the embedded
-resource is `resources/previewmd.icns`.
+resource is `resources/previewmd.icns`. Run `scripts/build-icons.sh` after changing
+the PNG master to regenerate all icon sizes and the embedded resource.
 
 [Release operations](docs/releases.md) describe GitHub Actions builds, persistent
 signing, the stable DMG/feed, verification and recovery. Release artifacts are
