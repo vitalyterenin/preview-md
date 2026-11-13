@@ -10,6 +10,10 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
     private let widthButton = NSButton(title: "Width: 800", target: nil, action: nil)
     private let editButton = NSButton(title: "Open in Editor…", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let profilePicker = NSPopUpButton()
+    private let profileReason = NSTextField(labelWithString: "")
+    private(set) var resolvedProfile = MarkdownProfile.commonMark
+    var profileChanged: (() -> Void)?
     private let findField = NSSearchField()
     private let findResult = NSTextField(labelWithString: "")
     private let findBar = NSStackView()
@@ -41,6 +45,11 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
         }
         widthButton.toolTip = "Switch between an 800 px reading column and window width"
         editButton.toolTip = "Open this file in VS Code, or choose another installed editor"
+        profilePicker.addItems(withTitles: MarkdownProfile.allCases.map(\.rawValue))
+        profilePicker.target = self; profilePicker.action = #selector(selectProfile)
+        profilePicker.setAccessibilityLabel("Markdown profile")
+        profileReason.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        profileReason.textColor = .secondaryLabelColor
         findField.placeholderString = "Find in document"
         findField.delegate = self
         findField.target = self; findField.action = #selector(findNext)
@@ -62,7 +71,8 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.setAccessibilityIdentifier("reading-status")
         statusLabel.isHidden = true
-        let header = NSStackView(views: [controls, findBar, statusLabel])
+        let profiles = NSStackView(views: [profilePicker, profileReason]); profiles.spacing = 8
+        let header = NSStackView(views: [controls, profiles, findBar, statusLabel])
         header.orientation = .vertical; header.alignment = .leading; header.spacing = 8
         header.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
         [header, webView].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; container.addSubview($0) }
@@ -85,7 +95,11 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
         let defaults = UserDefaults.standard
         webView.pageZoom = min(2, max(0.6, (defaults.object(forKey: DocumentState.zoomPreferenceKey(for: fileURL)) as? NSNumber)?.doubleValue ?? 1))
         readingWidthMode = DocumentState.ReadingWidthMode(rawValue: defaults.string(forKey: DocumentState.readingWidthPreferenceKey(for: fileURL)) ?? "") ?? .fixed
-        let content = MarkdownHTML.render(markdown, fileURL: fileURL)
+        let requested = MarkdownProfile.preference(for: fileURL)
+        profilePicker.selectItem(withTitle: requested.rawValue)
+        let content = MarkdownHTML.render(markdown, fileURL: fileURL, profile: requested)
+        resolvedProfile = content.decision.profile
+        profileReason.stringValue = "\(content.decision.profile.rawValue) · \(content.decision.reason)"
         tableIdentifiers = content.tableIdentifiers
         let restored = DocumentState.restoreTableColumnWidths(for: fileURL, identifiers: tableIdentifiers)
         showNotice(restored.warning)
@@ -150,6 +164,16 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
         }
     }
 
+    @objc private func selectProfile() {
+        guard let title = profilePicker.titleOfSelectedItem, let profile = MarkdownProfile(rawValue: title) else { return }
+        setProfile(profile)
+    }
+    func setProfile(_ profile: MarkdownProfile) {
+        guard let documentURL else { return }
+        MarkdownProfile.save(profile, for: documentURL)
+        profileChanged?()
+    }
+
     @objc private func openFile() { openRequested?() }
     @objc private func back() { backRequested?() }
     @objc private func reload() { reloadRequested?() }
@@ -168,6 +192,8 @@ final class MarkdownPreviewViewController: NSViewController, WKNavigationDelegat
         updateControls()
     }
     private func updateControls() {
+        profilePicker.isEnabled = documentURL != nil
+        if documentURL == nil { profileReason.stringValue = "Choose a profile after opening a document" }
         widthButton.title = readingWidthMode == .fixed ? "Width: 800" : "Width: Window"
         [widthButton, editButton, reloadButton].forEach { $0.isEnabled = documentURL != nil }
         backButton.isEnabled = canGoBack

@@ -19,6 +19,7 @@ final class ReaderWindow: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.contentViewController = preview; window.delegate = self; window.center()
+        preview.profileChanged = { [weak self] in self?.reload(force: true) }
         preview.openRequested = { [weak self] in self?.openRequested?() }
         preview.backRequested = { [weak self] in self?.back() }
         preview.reloadRequested = { [weak self] in self?.reload(force: true) }
@@ -59,7 +60,7 @@ final class ReaderWindow: NSWindowController, NSWindowDelegate {
         guard !isOpening, let previous = snapshot else { return }
         do {
             let next = try MarkdownSnapshot.read(previous.url)
-            guard force || failedReload || next.data != previous.data else { return }
+            guard force || failedReload || preview.resolvedProfile == .obsidian || next.data != previous.data else { return }
             generation += 1
             let expected = generation
             preview.capturePosition { [weak self] position in

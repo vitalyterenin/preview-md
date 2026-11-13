@@ -14,6 +14,8 @@ FILES = ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md')
 # The owner approved Apache-2.0 for PreviewMD; changes need a new approval.
 CMARK_REVISION = '27d942c8b0a62d192f616e5bf3578f4b6a89e180'
 CMARK_COPYING_SHA256 = 'c22e885f33b821bddb24cf007145e5540655b6c0f403e49e6c76a93c28e6d9a9'
+YAMS_LICENSE_SHA256 = '0354b0ea403d2e78059c5ae0510a2cfae9f8eb306fcef094ac9fff5b47e20bed'
+LIBYAML_LICENSE_SHA256 = 'c40112449f254b9753045925248313e9270efa36d226b22d82d4cc6c43c57f29'
 APACHE_SHA256 = 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'
 
 
@@ -39,6 +41,13 @@ def source_files():
         raise ValueError('Missing complete cmark-gfm COPYING')
     if hashlib.sha256(copying.encode()).hexdigest() != CMARK_COPYING_SHA256:
         raise ValueError('Changed or incomplete cmark-gfm COPYING')
+    try:
+        yaml_section = notices.split('## Yams 6.2.2 and bundled libyaml\n', 1)[1]
+        yaml_terms = [block.split('```', 1)[0] for block in yaml_section.split('```text\n')[1:]]
+    except IndexError:
+        raise ValueError('Missing Yams and libyaml notices')
+    if [hashlib.sha256(term.encode()).hexdigest() for term in yaml_terms] != [YAMS_LICENSE_SHA256, LIBYAML_LICENSE_SHA256]:
+        raise ValueError('Incomplete Yams/libyaml notices')
     return files, sparkle
 
 

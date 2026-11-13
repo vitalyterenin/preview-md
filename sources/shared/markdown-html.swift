@@ -5,21 +5,30 @@ import CMark
 struct RenderedMarkdown {
     let html: String
     let tableIdentifiers: [String]
+    var decision = ProfileDecision(profile: .commonMark, reason: "CommonMark")
 }
 
 enum MarkdownHTML {
     private static let registered: Void = { cmark_gfm_core_extensions_ensure_registered() }()
 
-    static func render(_ markdown: String, fileURL: URL? = nil) -> RenderedMarkdown {
+    static func render(_ markdown: String, fileURL: URL? = nil, profile: MarkdownProfile = .auto,
+                       resolver: VaultResolver? = nil, stack: [String] = [], decorateTables: Bool = true) -> RenderedMarkdown {
         _ = registered
-        let parser = cmark_parser_new(CMARK_OPT_DEFAULT)!
+        let decision = MarkdownProfile.resolve(profile, source: markdown, fileURL: fileURL)
+        let vault = decision.profile == .obsidian ? (resolver ?? fileURL.map(VaultResolver.init)) : nil
+        let chain = stack.isEmpty ? fileURL.map { [$0.resolvingSymlinksInPath().absoluteString] } ?? [] : stack
+        let prepared = decision.profile == .obsidian ? ObsidianMarkdown.prepare(markdown, fileURL: fileURL, resolver: vault, stack: chain) : nil
+        let source = prepared?.source ?? markdown
+        let options = decision.profile == .commonMark ? CMARK_OPT_DEFAULT : CMARK_OPT_FOOTNOTES
+        let parser = cmark_parser_new(options)!
         defer { cmark_parser_free(parser) }
-        for name in ["table", "strikethrough", "autolink"] {
+        for name in (decision.profile == .commonMark ? [] : ["table", "strikethrough", "autolink", "tasklist"]) {
             cmark_parser_attach_syntax_extension(parser, cmark_find_syntax_extension(name))
         }
-        markdown.withCString { cmark_parser_feed(parser, $0, markdown.utf8.count) }
+        source.withCString { cmark_parser_feed(parser, $0, source.utf8.count) }
         let root = cmark_parser_finish(parser)!
         defer { cmark_node_free(root) }
+        if decision.profile == .obsidian { ObsidianMarkdown.decorateTree(root) }
         let iterator = cmark_iter_new(root)!
         defer { cmark_iter_free(iterator) }
         var replacements: [(String, String)] = []
@@ -40,6 +49,7 @@ enum MarkdownHTML {
                     }
                 }
                 collect(node)
+                for replacement in prepared?.replacements ?? [] { text = text.replacingOccurrences(of: replacement.token, with: replacement.text) }
                 let base = anchor(text)
                 var id = base
                 var suffix = 1
@@ -49,7 +59,17 @@ enum MarkdownHTML {
             }
             if kind == "link" || kind == "image", let raw = cmark_node_get_url(node) {
                 let value = String(cString: raw)
-                let destination = kind == "image" ? imageURL(value, relativeTo: fileURL) : safeLink(value)
+                let destination: String
+                if let vault, let fileURL, URL(string: value)?.scheme == nil, !value.hasPrefix("#") {
+                    switch vault.resolve(value, from: fileURL) {
+                    case .found(let target): destination = kind == "image" ? imageURL(target.url.absoluteString, relativeTo: fileURL) : VaultResolver.navigationURL(target)
+                    case .failure: destination = kind == "image" ? "" : "previewmd-invalid:unresolved"
+                    }
+                } else if let vault, let candidate = URL(string: value), candidate.isFileURL, !vault.contains(candidate) {
+                    destination = kind == "image" ? "" : "previewmd-invalid:outside-vault"
+                } else {
+                    destination = kind == "image" ? imageURL(value, relativeTo: fileURL) : safeLink(value)
+                }
                 // Only app-validated attributes are substituted after cmark's safe renderer.
                 // Random tokens prevent document text from impersonating an asset placeholder.
                 let token = "previewmd-" + UUID().uuidString
@@ -57,7 +77,7 @@ enum MarkdownHTML {
                 replacements.append((token, escape(destination)))
             }
         }
-        let result = cmark_render_html(root, CMARK_OPT_DEFAULT, cmark_parser_get_syntax_extensions(parser))!
+        let result = cmark_render_html(root, options, cmark_parser_get_syntax_extensions(parser))!
         var html = String(cString: result)
         free(result)
         for (token, value) in replacements { html = html.replacingOccurrences(of: token, with: value) }
@@ -67,6 +87,14 @@ enum MarkdownHTML {
             let tag = String(html[range].dropLast()) + " id=\"\(escape(id))\">"
             html.replaceSubrange(range, with: tag)
         }
+        if let prepared {
+            for replacement in prepared.replacements {
+                if replacement.block { html = html.replacingOccurrences(of: "<p>" + replacement.token + "</p>", with: replacement.html) }
+                html = html.replacingOccurrences(of: replacement.token, with: replacement.html)
+            }
+            html = prepared.prefix + html
+        }
+        guard decorateTables else { return RenderedMarkdown(html: html, tableIdentifiers: [], decision: decision) }
         var tableIDs: [String] = []
         let tables = try! NSRegularExpression(pattern: "<table>.*?</table>", options: .dotMatchesLineSeparators)
         let matches = tables.matches(in: html, range: NSRange(html.startIndex..., in: html))
@@ -78,7 +106,7 @@ enum MarkdownHTML {
             let range = Range(match.range, in: html)!
             html.replaceSubrange(range, with: "<div class=\"table-frame\" data-table-id=\"\(id)\">\(html[range])</div>")
         }
-        return RenderedMarkdown(html: html, tableIdentifiers: tableIDs)
+        return RenderedMarkdown(html: html, tableIdentifiers: tableIDs, decision: decision)
     }
 
     static func anchor(_ text: String) -> String {
@@ -94,13 +122,14 @@ enum MarkdownHTML {
         return ["http", "https", "mailto", "file"].contains(scheme) ? value : "previewmd-invalid:blocked"
     }
 
-    private static func imageURL(_ value: String, relativeTo fileURL: URL?) -> String {
+    static func imageURL(_ value: String, relativeTo fileURL: URL?) -> String {
         guard let url = URL(string: value, relativeTo: fileURL?.deletingLastPathComponent())?.absoluteURL else { return "" }
         if ["http", "https"].contains(url.scheme?.lowercased() ?? "") { return url.absoluteString }
         guard url.isFileURL else { return "" }
         let types = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml"]
         guard let type = types[url.pathExtension.lowercased()],
-              let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 20 * 1024 * 1024,
+              let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]), values.isRegularFile == true,
+              let size = values.fileSize, size <= 20 * 1024 * 1024,
               let data = try? Data(contentsOf: url), data.count <= 20 * 1024 * 1024 else { return "" }
         return "data:\(type);base64,\(data.base64EncodedString())"
     }
@@ -313,6 +342,17 @@ enum MarkdownHTML {
 
     private static let styleSheet = """
     :root { color-scheme: light dark; }
+    .properties, .note-embed { border: 1px solid #8886; border-radius: 8px; padding: 16px; margin-bottom: 1.2em; }
+    .properties h2 { font-size: 1em; margin: 0 0 12px; } .properties dl { margin: 0; }
+    .property { display: grid; grid-template-columns: minmax(100px, 25%) 1fr; gap: 12px; margin: 8px 0; }
+    .property dt { font-weight: 600; overflow-wrap: anywhere; } .property dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .property-type { font-size: .75em; opacity: .65; } .property ul { margin: 0; }
+    .note-embed header { font-size: .8em; margin-bottom: 12px; } .render-warning { display: block; border-left: 3px solid #d29922; padding: 8px 12px; }
+    .render-warning pre { white-space: pre-wrap; } .callout { border-left: 4px solid #3b82b6; border-radius: 6px; background: #3b82b615; margin: 16px 0; padding: 12px 16px; }
+    .callout[data-callout="warning"], .callout[data-callout="danger"], .callout[data-callout="error"] { border-color: #d29922; }
+    .callout-title, .callout summary { font-weight: 600; margin-bottom: 8px; } .callout summary { cursor: pointer; }
+    mark { background: #f4cf5e80; color: inherit; } input[type="checkbox"] { accent-color: #3b82b6; }
+
     body { margin: 0; background: #ffffff; color: #1f2328; font: 17px/1.65 -apple-system, BlinkMacSystemFont, \"SF Pro Text\", sans-serif; }
     main { box-sizing: border-box; width: min(100%, 888px); margin: 0 auto; padding: 52px 44px 80px; }
     body.fluid-layout main { width: 100%; }

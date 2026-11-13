@@ -186,6 +186,7 @@ struct ReadingSmoke {
         quick.loadHTMLString(MarkdownHTML.document(markdown: "![Missing illustration](absent.svg)", title: "Missing", fileURL: a), baseURL: nil)
         try await wait("missing image explanation") { try await js(quick, "document.body.innerText.includes('Image unavailable: Missing illustration')") as? Bool == true }
         try expect(try String(contentsOf: a, encoding: .utf8) == source.replacingOccurrences(of: "BEFORE", with:"AFTER"), "Reader must never change Markdown source")
+        try await runObsidian(root: root)
         print("Verified semantics, local SVG in both HTML contexts, CSP-safe markup, table identity/bridge/recovery, native find, atomic refresh/position, links/Back, stale-file recovery and source preservation")
     }
 }

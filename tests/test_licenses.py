@@ -54,6 +54,14 @@ class LicenseTests(unittest.TestCase):
         path.write_text(original)
         licenses.source_files()
 
+    def test_yaml_and_bundled_libyaml_notices_are_complete(self):
+        path=self.root/'THIRD_PARTY_NOTICES.md'; original=path.read_text()
+        for marker in ('## Yams 6.2.2', 'Copyright (c) 2016 JP Simard.', 'Copyright (c) 2017-2020 Ingy döt Net'):
+            path.write_text(original.replace(marker, 'omitted'))
+            with self.assertRaises(ValueError): licenses.source_files()
+        path.write_text(original)
+        licenses.source_files()
+
     def test_wrong_embedded_sparkle_version_and_unapproved_license_fail(self):
         licenses.install(self.app,self.upstream)
         metadata=self.app/'Contents/Frameworks/Sparkle.framework/Resources/Info.plist'

@@ -12,6 +12,7 @@ sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
 target="arm64-apple-macosx13.0"
 tools="$(bash scripts/sparkle-tools.sh)"
 markdown_tools="$(python3 scripts/markdown-tools.py)"
+yaml_tools="$(python3 scripts/yaml-tools.py)"
 mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources" "$app_bundle/Contents/Frameworks" "$quick_look_bundle/Contents/MacOS"
 python3 scripts/release.py plist "$app_bundle/Contents/Info.plist"
 cp resources/previewmd.icns "$app_bundle/Contents/Resources/previewmd.icns"
@@ -34,15 +35,17 @@ for executable in "$sparkle/Versions/B/Sparkle" "$sparkle/Versions/B/Autoupdate"
 done
 swiftc -sdk "$sdk_path" -target "$target" -module-name PreviewMD \
   -I "$markdown_tools/include" "$markdown_tools/libcmark.a" \
+  -I "$yaml_tools/modules" -I "$yaml_tools/include" "$yaml_tools/libYams.a" \
   -framework AppKit -framework WebKit -F "$tools" -framework Sparkle \
   -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-  sources/shared/document-state.swift sources/shared/markdown-html.swift \
+  sources/shared/document-state.swift sources/shared/markdown-html.swift sources/shared/markdown-profile.swift sources/shared/vault-resolver.swift sources/shared/obsidian-markdown.swift sources/shared/markdown-properties.swift \
   sources/shared/markdown-preview-view-controller.swift sources/app/markdown-document.swift \
   sources/app/update-settings.swift sources/app/app-delegate.swift \
   -o "$app_bundle/Contents/MacOS/PreviewMD"
 swiftc -sdk "$sdk_path" -target "$target" -module-name PreviewMDQuickLook \
   -I "$markdown_tools/include" "$markdown_tools/libcmark.a" \
-  -framework QuickLookUI sources/shared/document-state.swift sources/shared/markdown-html.swift \
+  -I "$yaml_tools/modules" -I "$yaml_tools/include" "$yaml_tools/libYams.a" \
+  -framework QuickLookUI sources/shared/document-state.swift sources/shared/markdown-html.swift sources/shared/markdown-profile.swift sources/shared/vault-resolver.swift sources/shared/obsidian-markdown.swift sources/shared/markdown-properties.swift \
   sources/quick-look/preview-view-controller.swift sources/quick-look/extension-main.swift \
   -o "$quick_look_bundle/Contents/MacOS/PreviewMDQuickLook"
 python3 scripts/licenses.py install --app "$app_bundle" --sparkle-license "$tools/LICENSE"

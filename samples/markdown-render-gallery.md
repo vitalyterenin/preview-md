@@ -1,6 +1,6 @@
 # Markdown render gallery
 
-This file is a visual checklist for PreviewMD. The first part uses syntax that the app currently renders. The last part shows GitHub-style extensions that are outside the current viewer scope.
+This file is a visual checklist for PreviewMD. The first part uses syntax that the app currently renders. The last part distinguishes profile-specific syntax from unsupported extensions.
 
 ---
 
@@ -63,9 +63,11 @@ struct Document {
 
 ---
 
-## Unsupported extended syntax
+## Profile-specific and unsupported syntax
 
-These examples are intentionally shown as source for now, so it is clear which syntax is unsupported; these examples do not promise future implementation.
+Tasks and footnotes below render in GitHub and Obsidian profiles when used outside
+a code fence. Alerts, arbitrary HTML details, math and Mermaid remain unsupported.
+For supported Obsidian annotations and links, see the [profile demo](obsidian-demo.md).
 
 ````md
 - [x] Completed task

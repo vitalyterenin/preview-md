@@ -165,3 +165,37 @@ The whole documentation review covers this guide, the README, both samples,
 referenced illustration and icon assets, LICENSE, NOTICE, complete third-party
 notices, and the GitHub About description. The historical local product audit is
 retained outside publication because its evidence links are machine-local.
+
+## Local Obsidian/profile development
+
+The `feature/obsidian-profiles` branch extends the local reading-workflow candidate.
+It does not publish 0.1.4, change the version/build, or replace the installed 0.1.3.
+The owner's publication hold remains in effect; normal exact-ref approval is still
+required before any future PR or release operation.
+
+The shared renderer now offers Auto/CommonMark/GitHub/Obsidian profiles. The native
+regression harness adds a synthetic vault with Russian typed properties, short and
+path links, heading/block transclusion, images, nested folding callouts, comments,
+highlights, tasks and footnotes. It verifies actual WebKit navigation, Back, Find,
+per-file overrides/reopening, unchanged source bytes, and refresh of changed embeds.
+Failure cases include ambiguous names, missing sections, unsafe paths/symlinks,
+embed cycles, invalid YAML and bounded YAML alias/depth handling. UI automation
+was unavailable for this task; the native test harness is not a manual walkthrough.
+Quick Look uses Auto and shares the rendering code, but signed sandboxed vault
+access still requires a future installed-release test.
+
+YAML uses [Yams 6.2.2](https://github.com/jpsim/Yams/tree/6.2.2), its bundled libyaml,
+and their complete MIT notices. `scripts/yaml-tools.py` pins the upstream archive
+SHA-256, checks the reviewed license, and builds the dependency-free upstream
+Swift package. Its static product is linked into both host and extension. Older
+SwiftPM object output and the newer static-library output are supported. No YAML
+objects or note code are evaluated; event limits run before node composition.
+The optional cache override is `PREVIEWMD_YAML_TOOLS_DIR`.
+
+[Quartz's OFM adapter](https://github.com/jackyzha0/quartz/blob/v4/quartz/plugins/transformers/ofm.ts)
+and [remark-wiki-link](https://github.com/flowershow/remark-wiki-link) were reviewed.
+They rely on JavaScript/site-generation runtimes; the latter does not provide full
+note transclusion. No code was copied from either. PreviewMD instead extends its
+existing cmark syntax tree and filename resolver for native read-only rendering.
+Obsidian's MarkdownRenderer requires the Obsidian App/Component lifecycle and is
+not used as a standalone library. There is no embedded Obsidian/plugin runtime.

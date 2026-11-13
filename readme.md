@@ -4,6 +4,9 @@ PreviewMD is a native, read-only Markdown viewer for macOS. Open a Markdown file
 from Finder or **File → Open…** to read the rendered document, with adjustable
 zoom, reading width and table columns.
 
+The profile features described here are local development work. They have not
+been published or installed over the stable release.
+
 ## Install
 
 Requires an Apple silicon Mac and macOS 13 or later.
@@ -24,11 +27,12 @@ Security → Open Anyway**. No certificate installation is required.
 Supported extensions are `.md`, `.markdown`, `.mdown` and `.mkdn`.
 The shared cmark-gfm renderer supports CommonMark text structure, including nested
 lists, ordered-list starting numbers, reference links and hard line breaks, plus
-pipe tables, strikethrough and automatic links. PreviewMD provides no text editing
-controls. Opening several files creates independent document windows.
+pipe tables, strikethrough, tasks, footnotes and automatic links in the GitHub
+and Obsidian profiles. PreviewMD provides no text editing controls. Opening several files creates independent document windows.
 
 | Control | Action |
 | --- | --- |
+| **Markdown profile** | Auto, CommonMark, GitHub or Obsidian; remembers the choice for this file |
 | **Open…** / `Command-O` | Open one or more files; also available on an empty launch |
 | `Command-F`, `Command-G`, `Shift-Command-G` | Find text, next match, previous match |
 | Heading or neighboring Markdown link | Jump to a section or open the linked document in the same window |
@@ -71,6 +75,58 @@ next successful resize. Window and reading preferences are local, not portable.
 Local PNG, JPEG, GIF, WebP and SVG images up to 20 MiB each are embedded in the
 preview. Unreadable, missing or unsupported images display **Image unavailable**.
 
+## Markdown profiles and Obsidian
+
+**Auto** uses the nearest ancestor `.obsidian` directory to recognize a vault.
+Outside a vault it looks for distinctive syntax in prose, excluding code blocks,
+inline code and raw HTML. Plain documents fall back to **CommonMark**; GitHub
+syntax selects **GitHub**. The profile row shows the resolved mode and reason.
+Choose a mode explicitly when the source is ambiguous. The choice is saved per
+file path on this Mac and survives reopening; switching keeps zoom, width and
+scroll position. It never changes the source or Obsidian settings.
+
+| Profile | Interpretation |
+| --- | --- |
+| CommonMark | CommonMark structure; no pipe tables, task checkboxes, footnotes, strikethrough or Obsidian syntax |
+| GitHub | CommonMark plus pipe tables, task checkboxes, footnotes, strikethrough and autolinks |
+| Obsidian | GitHub foundation plus YAML properties, wikilinks, note/image embeds, callouts, highlights, comments and named blocks |
+
+Obsidian properties use a real YAML parser. Text, numbers, true/false checkboxes,
+dates, lists, aliases and quoted wikilinks are displayed as read-only properties.
+Text properties stay literal; nested mappings are shown structurally. Invalid,
+duplicate-key, oversized or excessively nested YAML, and YAML aliases/anchors
+that require expansion, retain a readable source fallback. Custom vault-wide
+property type settings and CSS classes are not imported.
+
+`[[Note]]`, `[[Note|Label]]`, `[[Note#Heading]]` and `[[Note#^block-id]]` resolve
+inside the vault. Paths with folders start at the vault root; `./` and `../`
+are relative to the current note and must stay inside that root. Without a vault,
+the document's folder is the lookup boundary. Short names search that boundary;
+duplicate basenames display an ambiguity notice and require an explicit path.
+Aliases are displayed as properties and link labels; they are not a second
+vault-wide filename index. Missing links are visible, not newly created notes.
+
+`![[Note]]`, heading/block embeds and `![[image.svg|320x180]]` use the same
+resolver. A standalone `^block-id` after a list, quote or table names that block;
+paragraph and list-item IDs can appear at the end of their text. Cycles, missing
+sections, ambiguous headings and unsupported media produce readable notices.
+Embed traversal is capped at five levels, 64 embeds, 2 MiB per note and 8 MiB of
+note text per render. The filename index is capped at 20,000 entries; an incomplete
+index asks for an explicit path. Hidden files/directories and symlink traversal
+are not indexed. PDF/audio/video/canvas embeds are not rendered.
+
+Callouts support nested content and `+`/`-` folding. `==Highlights==`, `%%comments%%`,
+read-only tasks and footnotes preserve code examples as literal text. Obsidian
+notes refresh on return to the app even when only an embedded note changed.
+**Reload** retries resolution after file or folder changes. The
+[synthetic Obsidian demo](samples/obsidian-demo.md) exercises these features.
+
+This is core reading compatibility, not the Obsidian application or plugin runtime.
+It does not execute Dataview, Templater, note scripts, HTML or vault CSS, and does
+not implement math, Mermaid, canvas, graph/search queries, multi-heading search,
+plugin-defined syntax, backlinks or editing. Auto is a heuristic, not a claim that
+all Markdown dialects can be inferred perfectly.
+
 ## Software updates
 
 Open **PreviewMD → Settings → Software Updates…**:
@@ -103,10 +159,13 @@ of the installed 0.1.3 extension was observed on macOS 26.7.2; this is not a tes
 of every supported OS. The 0.1.4 image rendering path is covered in a standalone
 WebKit context; its sandboxed Finder preview must also be checked after installing
 the signed release. Finder may choose another provider or a plain-text fallback.
-Quick Look is a reading preview; use the main app for navigation and saved resizing.
+Quick Look uses the same profile detection/rendering core in Auto mode. Its sandbox
+may prevent vault discovery or access to sibling notes/attachments; notices then
+explain unresolved content. The main app's per-file override is not shared with
+the extension. Use the main app for navigation, overrides and saved resizing.
 
-Task lists, footnotes, GitHub alerts, collapsible details, math and Mermaid are
-not rendered as those extended features. See the
+GitHub alerts, arbitrary HTML details, math and Mermaid are not rendered as
+those extended features. Obsidian callouts use their own supported folding syntax. See the
 [render gallery](samples/markdown-render-gallery.md) for examples and the
 [formatting demo](samples/formatting-demo.md) for a short sample.
 
@@ -122,9 +181,8 @@ bash scripts/test.sh
 python3 scripts/check-app.py build/PreviewMD.app
 ```
 
-The build downloads pinned, checksum-verified Sparkle binaries and cmark-gfm
-sources, and uses Apple's
-AppKit, WebKit and QuickLookUI frameworks. It produces `build/PreviewMD.app` with
+The build downloads pinned, checksum-verified Sparkle binaries, cmark-gfm and Yams
+sources, and uses Apple's AppKit, WebKit and QuickLookUI frameworks. It produces `build/PreviewMD.app` with
 an ad hoc development signature. Keep development output separate from the
 installed stable app. The icon source is `assets/previewmd-icon.png`; the embedded
 resource is `resources/previewmd.icns`.
@@ -136,6 +194,7 @@ built in GitHub Actions.
 ## License
 
 Maintained by Vitaly Terenin. PreviewMD's original code and assets are licensed
-under [Apache-2.0](LICENSE); see [NOTICE](NOTICE). Sparkle, cmark-gfm and adapted
-release tooling retain their own terms in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+under [Apache-2.0](LICENSE); see [NOTICE](NOTICE). Sparkle, cmark-gfm, Yams,
+libyaml and adapted release tooling retain their own terms in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 All three documents are included in the app and DMG.
